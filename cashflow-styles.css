@@ -4390,3 +4390,33 @@ body.theme-optimized .st-bottomnav {
   box-shadow: none;
 }
 body.theme-optimized .st-bottomnav { background: #000; border-top-color: rgba(0, 255, 65, 0.25); }
+
+
+/* ============================================================
+   10. FIXES — Heatmap header & Goals header
+   ============================================================ */
+/* cashflow.js chèn margin âm (-16px) cho thanh lịch heatmap, nhưng khung
+   .hub-cf-heatmap-wrap không có padding 16px → thanh lịch bị lòi ra ngoài
+   mép trên/hai bên. Ghi đè lại cho khớp khung (mọi kích thước màn hình). */
+:root body .hub-cf-heatmap-header {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border-radius: inherit;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  overflow: hidden;
+}
+:root body .hub-cf-heatmap-wrap { overflow: hidden; }
+
+@media (max-width: 768px) {
+  /* Heatmap: nav tháng gọn, căn giữa, không tràn */
+  :root body .hub-cf-heatmap-header { justify-content: center; gap: 10px; }
+  .hub-cf-heatmap-nav { width: 100%; justify-content: space-between; flex-wrap: nowrap; }
+  .hub-cf-heatmap-month-btn { flex: 1 1 auto; min-width: 0; justify-content: center; }
+  .hub-cf-heatmap-nav-btn { width: 40px; height: 40px; flex: 0 0 auto; }
+
+  /* Mục tiêu tiết kiệm: tiêu đề + nút "Mục tiêu mới" xếp dọc, căn giữa */
+  .cfg-head { flex-direction: column; align-items: center; text-align: center; gap: 14px; }
+  .cfg-head .cfg-titles { width: 100%; }
+  .cfg-head .cfg-btn { min-width: 220px; height: 44px; justify-content: center; }
+}
