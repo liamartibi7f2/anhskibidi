@@ -324,62 +324,255 @@ ul, ol { list-style: none; }
   margin: 0 auto;
   padding: 24px 16px 64px;
 }
+
 .standalone-topbar {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 12px;
-  padding: 12px 18px;
+  gap: 14px 20px;
+  padding: 16px 18px 14px 16px;
   margin-bottom: 24px;
-  border-radius: var(--radius-lg, 16px);
+  border-radius: 18px;
+  box-shadow: var(--shadow-md), inset 0 1px 0 var(--glass-highlight);
 }
+/* Đường sáng mảnh trên đỉnh — điểm nhấn "cao cấp" */
+.standalone-topbar::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 28px;
+  right: 28px;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--accent-primary), transparent);
+  opacity: 0.55;
+}
+
+/* ---- Brand ---- */
 .standalone-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-family: var(--font-mono);
-  font-size: 1.05rem;
+  gap: 12px;
+  min-width: 0;
+}
+.st-logo {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  color: var(--bg-deep);
+  background-color: var(--accent-primary);
+  background-image: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+.st-logo svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.st-brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  line-height: 1;
+}
+.st-wordmark {
+  font-family: var(--font-body);
+  font-size: 1.2rem;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: -0.02em;
   color: var(--text-primary);
 }
 .standalone-brand-dot {
   color: var(--accent-primary);
+  font-weight: 600;
   text-shadow: var(--accent-glow);
 }
+.st-tagline {
+  font-family: var(--font-body);
+  font-size: 0.6rem;
+  font-weight: 500;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* ---- Controls ---- */
 .standalone-controls {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
+  flex: 1 1 100%;
   gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--glass-border);
 }
 .standalone-select,
-.standalone-btn {
-  height: 34px;
-  padding: 0 12px;
-  border-radius: 999px;
+.standalone-btn,
+.cloud-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 13px;
+  border-radius: 10px;
   border: 1px solid var(--glass-border);
-  background: var(--bg-elevated);
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  font-weight: 600;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
   cursor: pointer;
-  transition: border-color 0.2s, color 0.2s, background 0.2s;
+  transition: border-color 0.2s, color 0.2s, background-color 0.2s;
+}
+.standalone-btn svg,
+.st-lang-globe {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .standalone-select:hover,
-.standalone-btn:hover {
+.standalone-btn:hover,
+.cloud-badge:hover {
   border-color: var(--accent-primary);
-  color: var(--accent-primary);
+  color: var(--text-primary);
+  background-color: var(--glass-highlight);
+}
+.standalone-select:focus-visible,
+.standalone-btn:focus-visible,
+.cloud-badge:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+/* Tài khoản */
+.cloud-badge {
+  background-color: var(--glass-highlight);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.cloud-badge #st-auth-text {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cloud-dot {
+  position: relative;
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning, #ffb347);
+}
+.cloud-dot.is-online {
+  background: var(--success, #44ff88);
+  box-shadow: 0 0 0 3px rgba(68, 255, 136, 0.14), 0 0 10px var(--success, #44ff88);
+}
+
+/* Chọn theme (mũi tên là SVG thật để không bị mất ở chế độ Optimize) */
+.st-select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.standalone-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 32px;
+  color: var(--text-primary);
+}
+.standalone-select option {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+.st-chevron {
+  position: absolute;
+  right: 11px;
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+  transition: stroke 0.2s;
+}
+.st-select-wrap:hover .st-chevron { stroke: var(--accent-primary); }
+
+/* Nhóm nút bật/tắt (Optimize | Lite) */
+.st-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  background: var(--bg-elevated);
+}
+.st-seg .standalone-btn {
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+.st-seg .standalone-btn:hover {
+  border-color: transparent;
+  background-color: var(--glass-highlight);
 }
 .standalone-btn[aria-pressed="true"] {
-  background: var(--accent-primary);
-  color: var(--bg-deep);
-  border-color: var(--accent-primary);
+  background-color: var(--glass-highlight);
+  background-color: color-mix(in srgb, var(--accent-primary) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary) 45%, transparent);
+  color: var(--accent-primary);
 }
+.st-seg .standalone-btn[aria-pressed="true"]:hover {
+  border-color: color-mix(in srgb, var(--accent-primary) 45%, transparent);
+  color: var(--accent-primary);
+}
+
+/* Ngôn ngữ */
+#st-lang-code {
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+/* Vạch ngăn nhóm: đẩy Backup / Restore sang mép phải */
+.st-divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px 0 auto;
+  background: var(--glass-border);
+}
+
 #cashflow-mount .hub-cf-container {
   max-width: 100%;
+}
+
+/* ---- Responsive ---- */
+@media (max-width: 720px) {
+  .st-divider { display: none; }
+}
+@media (max-width: 520px) {
+  .standalone-topbar { padding: 12px; border-radius: 16px; }
+  .st-tagline { display: none; }
+  .st-solo .st-label { display: none; }
+  #st-backup, #st-restore { padding: 0 10px; }
+  .cloud-badge #st-auth-text { max-width: 110px; }
 }
 
 /* ----------------------------------------------------------
