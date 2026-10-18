@@ -2358,7 +2358,13 @@ body.theme-optimized .heatmap-limit-unit {
 .cfx-ai__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cfx-accent); box-shadow: 0 0 8px var(--cfx-accent); }
 .cfx-ai__dot.is-off { background: var(--cfx-warn); box-shadow: 0 0 8px var(--cfx-warn); }
 .cfx-sep { opacity: 0.5; }
-.cfx-ai__tools { display: flex; align-items: center; gap: 8px; }
+.cfx-ai__tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.cfx-select--model { min-width: 0; }
+.cfx-select[hidden] { display: none; }
+@media (max-width: 520px) {
+  .cfx-ai__tools { width: 100%; flex-wrap: nowrap; }
+  .cfx-ai__tools .cfx-select { flex: 1 1 0; min-width: 0; text-overflow: ellipsis; }
+}
 
 .cfx-select {
   appearance: none; -webkit-appearance: none; cursor: pointer;

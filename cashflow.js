@@ -908,8 +908,32 @@ const cashflowModule = (function () {
   //   Survives destroy()/render() cycles, enables background execution
   // ============================================================
 
+  // Các model Gemini người dùng có thể chọn (hiển thị trong ô chọn model riêng của Gemini)
+  const _GEMINI_MODEL_OPTIONS = [
+    { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash' },
+    { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash' },
+    { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' }
+  ];
+  const _GEMINI_DEFAULT_MODEL = 'gemini-3.7-flash';
+
+  function _aiSafeGeminiModel(id) {
+    return _GEMINI_MODEL_OPTIONS.some(function (m) { return m.id === id; }) ? id : _GEMINI_DEFAULT_MODEL;
+  }
+  function _aiGeminiLabel(id) {
+    var f = _GEMINI_MODEL_OPTIONS.filter(function (m) { return m.id === id; })[0];
+    return f ? f.label : id;
+  }
+  // Thứ tự thử: model người dùng chọn trước, nếu quá tải thì sang các model còn lại (mới nhất trước)
+  function _aiGeminiOrder() {
+    var chosen = _aiSafeGeminiModel(_aiState.geminiModel);
+    var rest = _GEMINI_MODEL_OPTIONS.map(function (m) { return m.id; }).filter(function (id) { return id !== chosen; }).reverse();
+    return [chosen].concat(rest);
+  }
+
   let _aiState = {
     provider: 'gemini',              // Persisted in localStorage
+    geminiModel: _GEMINI_DEFAULT_MODEL, // Model Gemini đang chọn (persisted)
+    usedGeminiModel: null,           // Model Gemini thực tế đã trả lời lần gần nhất
     isLoading: false,                // Programmatic flag
     currentResponse: '',             // Last complete response (markdown)
     conversationHistory: [],         // [{ role, content, timestamp }]
@@ -928,6 +952,7 @@ const cashflowModule = (function () {
       if (saved) {
         const parsed = JSON.parse(saved);
         _aiState.provider = parsed.provider || 'gemini';
+        _aiState.geminiModel = _aiSafeGeminiModel(parsed.geminiModel);
         _aiState.conversationHistory = parsed.conversationHistory || [];
         _aiState.currentResponse = parsed.currentResponse || '';
         _aiState.tab = parsed.tab === 'chat' ? 'chat' : 'plan';
@@ -940,6 +965,7 @@ const cashflowModule = (function () {
     try {
       localStorage.setItem('hub_cf_ai_state', JSON.stringify({
         provider: _aiState.provider,
+        geminiModel: _aiState.geminiModel,
         conversationHistory: _aiState.conversationHistory.slice(-60),
         currentResponse: _aiState.currentResponse,
         tab: _aiState.tab
@@ -1705,6 +1731,7 @@ var _SYSTEM_CATEGORY_NAMES = {
 function _restoreAIState() {
   const providerSelect = _qs('#cf-ai-provider');
   if (providerSelect) providerSelect.value = _aiState.provider;
+  _syncAIModelPicker();
 
   _renderChatHistory();
   _renderSpendingPlan();     // cũng cập nhật Insight banner
@@ -10322,7 +10349,6 @@ ${_aiShellHTML()}
 
   var _AI_RETRY_STATUS = [429, 500, 502, 503];          // thử lại cùng model
   var _AI_FALLBACK_STATUS = [404, 429, 500, 502, 503];  // đổi sang model dự phòng
-  var _GEMINI_MODELS = ['gemini-3.7-flash', 'gemini-3.8-flash', 'gemini-3.6-flash'];
   var _aiPreviewText = '', _aiPreviewRaf = 0;   // xem trước câu trả lời khi đang stream
 
   async function _resilientFetch(url, options, config) {
@@ -10428,12 +10454,12 @@ ${_aiShellHTML()}
     var tm = _aiTimer(signal);
     try {
       // Model chính quá tải -> thử lại 1 lần -> đổi sang model dự phòng
-      var response;
-      for (var mi = 0; mi < _GEMINI_MODELS.length; mi++) {
+      var response, order = _aiGeminiOrder(), mi;
+      for (mi = 0; mi < order.length; mi++) {
         for (var attempt = 0; attempt < 2; attempt++) {
           tm.arm(30000); // chờ Gemini bắt đầu trả lời
           response = await fetch(
-            'https://generativelanguage.googleapis.com/v1beta/models/' + _GEMINI_MODELS[mi] + ':streamGenerateContent?alt=sse&key=' + encodeURIComponent(apiKey),
+            'https://generativelanguage.googleapis.com/v1beta/models/' + order[mi] + ':streamGenerateContent?alt=sse&key=' + encodeURIComponent(apiKey),
             { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body, signal: tm.signal }
           );
           if (attempt === 1 || _AI_RETRY_STATUS.indexOf(response.status) === -1) break;
@@ -10442,6 +10468,7 @@ ${_aiShellHTML()}
         if (response.ok || _AI_FALLBACK_STATUS.indexOf(response.status) === -1) break;
       }
 
+      if (response.ok) _aiState.usedGeminiModel = order[Math.min(mi, order.length - 1)];
       if (!response.ok) {
         var error = await response.json().catch(function () { return {}; });
         throw new Error('Gemini API error: ' + response.status + ' - ' + ((error.error && error.error.message) || response.statusText));
@@ -10650,9 +10677,12 @@ ${_aiShellHTML()}
           '</div>' +
         '</div>' +
         '<div class="cfx-ai__tools">' +
-          '<select id="cf-ai-provider" class="cfx-select" aria-label="AI Model">' +
-            '<option value="gemini">Gemini 3.7 Flash</option>' +
+          '<select id="cf-ai-provider" class="cfx-select" aria-label="AI">' +
+            '<option value="gemini">Gemini</option>' +
             '<option value="nvidia">Nvidia Nemotron 3 Ultra</option>' +
+          '</select>' +
+          '<select id="cf-ai-gemini-model" class="cfx-select cfx-select--model" aria-label="' + _escHtml(_getCFLang() === 'en' ? 'Gemini model' : 'Mô hình Gemini') + '">' +
+            _GEMINI_MODEL_OPTIONS.map(function (m) { return '<option value="' + m.id + '">' + _escHtml(m.label) + '</option>'; }).join('') +
           '</select>' +
           '<button type="button" id="cfx-ai-new" class="cfx-iconbtn" title="' + _escHtml(_t('aiNewChat')) + '" aria-label="' + _escHtml(_t('aiNewChat')) + '">' + AI_ICON.plus + '</button>' +
           '<button type="button" id="cf-ai-settings-btn" class="cfx-iconbtn" title="' + _escHtml(_t('aiSettingsTitle')) + '" aria-label="' + _escHtml(_t('aiSettingsTitle')) + '">' + AI_ICON.key + '</button>' +
@@ -10840,6 +10870,14 @@ ${_aiShellHTML()}
     return _getAIKey(_aiState.provider) ? 'Sẵn sàng' : 'Chưa có API key';
   }
 
+  // Ô chọn model Gemini: chỉ hiện khi đang dùng Gemini, luôn khớp với model đã lưu
+  function _syncAIModelPicker() {
+    var sel = _qs('#cf-ai-gemini-model');
+    if (!sel) return;
+    sel.value = _aiSafeGeminiModel(_aiState.geminiModel);
+    sel.hidden = _aiState.provider !== 'gemini';
+  }
+
   function _updateAIStatus() {
     var dot = _qs('#cfx-ai-dot');
     var hasKey = !!_getAIKey(_aiState.provider);
@@ -10933,6 +10971,7 @@ ${_aiShellHTML()}
 
     try {
       var req = _aiBuildRequest(userQuery);
+      _aiState.usedGeminiModel = null;
       var responseText;
       if (provider === 'nvidia') {
         try {
@@ -10951,6 +10990,10 @@ ${_aiShellHTML()}
       }
 
       if (requestId !== _aiState.requestId) return;
+
+      if (_aiState.usedGeminiModel && _aiState.usedGeminiModel !== _aiSafeGeminiModel(_aiState.geminiModel)) {
+        _showToast(_aiGeminiLabel(_aiSafeGeminiModel(_aiState.geminiModel)) + ' đang quá tải, đã dùng ' + _aiGeminiLabel(_aiState.usedGeminiModel));
+      }
 
       _aiState.currentResponse = responseText;
       _aiState.conversationHistory.push({ role: 'assistant', content: responseText, timestamp: Date.now() });
@@ -11094,7 +11137,12 @@ ${_aiShellHTML()}
         if (e.target && e.target.id === 'cf-ai-provider') {
           _aiState.provider = e.target.value;
           _saveAIState();
+          _syncAIModelPicker();
           _updateAIStatus();
+        }
+        if (e.target && e.target.id === 'cf-ai-gemini-model') {
+          _aiState.geminiModel = _aiSafeGeminiModel(e.target.value);
+          _saveAIState();
         }
       });
     }
