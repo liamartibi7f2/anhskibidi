@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="cyberpunk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Wallet.OS — Quản Lý Tài Chính Cá Nhân</title>
+
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- File CSS độc lập đã lọc gọn -->
+  <link rel="stylesheet" href="cashflow-styles.css?v=20261018" />
+
+</head>
+<body>
+
+  <div class="standalone-shell">
+    <!-- Thanh điều khiển & Đăng nhập Cloud -->
+    <header class="standalone-topbar glass">
+      <div class="standalone-brand">
+        <span class="st-logo" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></svg>
+        </span>
+        <span class="st-brand-text">
+          <span class="st-wordmark">Wallet<span class="standalone-brand-dot">.OS</span></span>
+          <span class="st-tagline">Personal Finance</span>
+        </span>
+      </div>
+
+      <!-- Tài khoản / Trạng thái Cloud -->
+      <button type="button" id="st-auth" class="cloud-badge" title="Đăng nhập Google để đồng bộ đám mây">
+        <span id="st-auth-dot" class="cloud-dot"></span>
+        <span id="st-auth-text">Đăng nhập Cloud</span>
+      </button>
+
+      <div class="standalone-controls">
+        <!-- Chọn Theme -->
+        <span class="st-select-wrap">
+          <select id="st-theme" class="standalone-select" aria-label="Giao diện">
+            <option value="cyberpunk">Cyberpunk</option>
+            <option value="solar-zen">Solar Zen</option>
+            <option value="lofi-twilight">Lo-Fi Twilight</option>
+          </select>
+          <svg class="st-chevron" viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+        </span>
+
+        <!-- Hiệu năng: Optimize / Lite -->
+        <div class="st-seg" role="group" aria-label="Hiệu năng">
+          <button type="button" id="st-opt" class="standalone-btn" aria-pressed="false" title="Chế độ Terminal siêu nhẹ">
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+            <span>Optimize</span>
+          </button>
+          <button type="button" id="st-lite" class="standalone-btn" aria-pressed="false" title="Tắt hiệu ứng làm mờ cho máy yếu">
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            <span>Lite</span>
+          </button>
+        </div>
+
+        <!-- Ngôn ngữ -->
+        <button type="button" id="st-lang" class="standalone-btn st-solo" title="Đổi ngôn ngữ">
+          <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          <span id="st-lang-code">VI</span>
+        </button>
+
+        <span class="st-divider" aria-hidden="true"></span>
+
+        <!-- Sao lưu & Khôi phục JSON -->
+        <button type="button" id="st-backup" class="standalone-btn st-solo" title="Tải file sao lưu JSON">
+          <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span class="st-label">Backup</span>
+        </button>
+        <button type="button" id="st-restore" class="standalone-btn st-solo" title="Khôi phục từ file JSON">
+          <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <span class="st-label">Restore</span>
+        </button>
+        <input type="file" id="st-restore-input" accept=".json" style="display:none" />
+      </div>
+    </header>
+
+    <!-- Nơi gắn toàn bộ giao diện CashFlow -->
+    <main id="cashflow-mount" class="module-section"></main>
+  </div>
+
+  <!-- 1. Thư viện Chart.js, SheetJS (XLSX) & Firebase Compat SDK -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+  <!-- 2. Khởi tạo Firebase + HubDB (Đồng bộ Firestore & LocalStorage) -->
+  <script>
+    (function () {
+      'use strict';
+
+      // ====================================================================
+      // CẤU HÌNH FIREBASE CỦA BẠN (ĐÃ SỬA CHUẨN):
+      // ====================================================================
+      var firebaseConfig = {
+        apiKey: "AIzaSyA-OzyenFKXldv5p5WxFAIJ6dM4ZVucrGU",
+        authDomain: "financial-performaces.firebaseapp.com",
+        projectId: "financial-performaces",
+        storageBucket: "financial-performaces.firebasestorage.app",
+        messagingSenderId: "383668604427",
+        appId: "1:383668604427:web:b20664ddd1d8f63522c10e",
+        measurementId: "G-MC56TNVCZ3"
+      };
+
+      var isFirebaseConfigured = Boolean(firebaseConfig.apiKey && firebaseConfig.apiKey !== "THAY_API_KEY_CUA_BAN");
+      var auth = null;
+      var db = null;
+      var currentUser = null;
+
+      // Promise chờ Firebase xác nhận trạng thái đăng nhập lần đầu trước khi nạp dữ liệu
+      var authReadyResolve;
+      var authReadyPromise = new Promise(function (resolve) {
+        authReadyResolve = resolve;
+      });
+
+      if (isFirebaseConfigured && typeof firebase !== 'undefined') {
+        try {
+          firebase.initializeApp(firebaseConfig);
+          auth = firebase.auth();
+          db = firebase.firestore();
+
+          var initialAuthChecked = false;
+          auth.onAuthStateChanged(function (user) {
+            currentUser = user || null;
+            updateAuthUI(currentUser);
+            if (!initialAuthChecked) {
+              initialAuthChecked = true;
+              authReadyResolve(currentUser);
+            }
+          });
+        } catch (err) {
+          console.error('[Wallet.OS] Lỗi khởi tạo Firebase:', err);
+          authReadyResolve(null);
+        }
+      } else {
+        authReadyResolve(null);
+      }
+
+      function updateAuthUI(user) {
+        var dot = document.getElementById('st-auth-dot');
+        var txt = document.getElementById('st-auth-text');
+        if (!dot || !txt) return;
+        if (!isFirebaseConfigured) {
+          dot.classList.remove('is-online');
+          txt.textContent = 'Local Mode (Chưa gắn Firebase)';
+          return;
+        }
+        if (user) {
+          dot.classList.add('is-online');
+          var name = user.displayName || user.email || 'Cloud';
+          txt.textContent = name.split(' ')[0] + ' (Đăng xuất)';
+        } else {
+          dot.classList.remove('is-online');
+          txt.textContent = 'Đăng nhập Cloud';
+        }
+      }
+
+      // Sự kiện bấm nút Đăng nhập / Đăng xuất
+      window.addEventListener('DOMContentLoaded', function () {
+        var authBtn = document.getElementById('st-auth');
+        if (!authBtn) return;
+        updateAuthUI(currentUser);
+
+        authBtn.addEventListener('click', async function () {
+          if (!isFirebaseConfigured || !auth) {
+            alert('Bạn chưa điền firebaseConfig trong file index.html! Hiện tại dữ liệu đang được lưu trên trình duyệt này.');
+            return;
+          }
+          try {
+            if (currentUser) {
+              if (confirm('Bạn có muốn đăng xuất khỏi tài khoản ' + (currentUser.email || '') + ' không?')) {
+                await auth.signOut();
+                location.reload();
+              }
+            } else {
+              var provider = new firebase.auth.GoogleAuthProvider();
+              await auth.signInWithPopup(provider);
+              location.reload();
+            }
+          } catch (e) {
+            console.error('[Wallet.OS] Lỗi đăng nhập:', e);
+            alert('Đăng nhập thất bại: ' + (e.message || e));
+          }
+        });
+      });
+
+      // ── A. Bộ chống dội (HubDebounce) ──
+      var _timers = {};
+      window.HubDebounce = {
+        call: function (key, fn, delay) {
+          clearTimeout(_timers[key]);
+          _timers[key] = setTimeout(fn, delay || 400);
+        }
+      };
+
+      // ── B. Bộ lưu trữ kép: Cloud Firestore + LocalStorage Cache (HubDB) ──
+      var DATA_KEY = 'wallet_os_cashflow_data_v1';
+      var META_KEY = 'wallet_os_cashflow_meta_v1';
+
+      var DEFAULT_DATA = {
+        startingBalance: 0,
+        balanceSnapshots: [],
+        transactions: [],
+        debts: [],
+        goals: []
+      };
+
+      var DEFAULT_META = {
+        netWorthOffset: 0,
+        savingsBalance: 0,
+        initBank: 0,
+        initCash: 0,
+        budgets: {},
+        budgetPlans: {},
+        dailyLimits: {}
+      };
+
+      function readLocal(key, fallback) {
+        try {
+          var raw = localStorage.getItem(key);
+          if (raw) return JSON.parse(raw);
+        } catch (e) {}
+        return JSON.parse(JSON.stringify(fallback));
+      }
+
+      function writeLocal(key, val) {
+        try {
+          localStorage.setItem(key, JSON.stringify(val));
+        } catch (e) {}
+      }
+
+      window.HubDB = {
+        loadCashFlowData: async function () {
+          await authReadyPromise;
+          if (currentUser && db) {
+            try {
+              var docRef = db.collection('users').doc(currentUser.uid).collection('cashflow').doc('data');
+              var snap = await docRef.get();
+              if (snap.exists && snap.data()) {
+                var cloudData = Object.assign({}, DEFAULT_DATA, snap.data());
+                writeLocal(DATA_KEY, cloudData);
+                if (Array.isArray(cloudData.goals)) {
+                  writeLocal('hub_cf_goals_backup_v1', cloudData.goals);
+                }
+                return cloudData;
+              } else {
+                // Nếu lần đầu đăng nhập mà dưới máy đã có dữ liệu tạm -> đẩy lên Cloud luôn
+                var localData = readLocal(DATA_KEY, DEFAULT_DATA);
+                await docRef.set(localData);
+                return localData;
+              }
+            } catch (e) {
+              console.warn('[Wallet.OS] Không đọc được Cloud, dùng bản lưu cục bộ:', e);
+            }
+          }
+          return readLocal(DATA_KEY, DEFAULT_DATA);
+        },
+
+        saveCashFlowData: async function (data) {
+          writeLocal(DATA_KEY, data);
+          await authReadyPromise;
+          if (currentUser && db) {
+            try {
+              var cleanData = JSON.parse(JSON.stringify(data));
+              await db.collection('users').doc(currentUser.uid).collection('cashflow').doc('data').set(cleanData);
+            } catch (e) {
+              console.error('[Wallet.OS] Lỗi lưu dữ liệu lên Cloud:', e);
+            }
+          }
+        },
+
+        loadCashFlowMeta: async function () {
+          await authReadyPromise;
+          if (currentUser && db) {
+            try {
+              var docRef = db.collection('users').doc(currentUser.uid).collection('cashflow').doc('meta');
+              var snap = await docRef.get();
+              if (snap.exists && snap.data()) {
+                var cloudMeta = Object.assign({}, DEFAULT_META, snap.data());
+                writeLocal(META_KEY, cloudMeta);
+                return cloudMeta;
+              } else {
+                var localMeta = readLocal(META_KEY, DEFAULT_META);
+                await docRef.set(localMeta);
+                return localMeta;
+              }
+            } catch (e) {
+              console.warn('[Wallet.OS] Không đọc được Meta trên Cloud, dùng bản cục bộ:', e);
+            }
+          }
+          return readLocal(META_KEY, DEFAULT_META);
+        },
+
+        saveCashFlowMeta: async function (meta) {
+          writeLocal(META_KEY, meta);
+          await authReadyPromise;
+          if (currentUser && db) {
+            try {
+              var cleanMeta = JSON.parse(JSON.stringify(meta));
+              await db.collection('users').doc(currentUser.uid).collection('cashflow').doc('meta').set(cleanMeta);
+            } catch (e) {
+              console.error('[Wallet.OS] Lỗi lưu Meta lên Cloud:', e);
+            }
+          }
+        }
+      };
+
+      // ── C. Giả lập đối tượng app ──
+      window.app = {
+        getLanguage: function () {
+          return localStorage.getItem('hub_system_language') || 'vi';
+        },
+        register: function (mod) {
+          window.__registeredCashflow = mod;
+        }
+      };
+    })();
+  </script>
+
+  <!-- 3. Nạp nguyên bản file cashflow.js -->
+  <script src="cashflow.js?v=20261018"></script>
+
+  <!-- 4. Khởi chạy giao diện & các nút điều khiển -->
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      var mountEl = document.getElementById('cashflow-mount');
+      var mod = window.cashflowModule || window.__registeredCashflow;
+
+      if (mod && typeof mod.render === 'function') {
+        mod.render(mountEl);
+      }
+
+      var themeSelect = document.getElementById('st-theme');
+      var optBtn = document.getElementById('st-opt');
+      var liteBtn = document.getElementById('st-lite');
+      var langBtn = document.getElementById('st-lang');
+
+      var savedTheme = localStorage.getItem('wallet_os_theme') || 'cyberpunk';
+      document.documentElement.setAttribute('data-theme', savedTheme);
+      themeSelect.value = savedTheme;
+
+      themeSelect.addEventListener('change', function () {
+        var t = this.value;
+        document.documentElement.setAttribute('data-theme', t);
+        localStorage.setItem('wallet_os_theme', t);
+        if (mod && typeof mod.updateLanguage === 'function') {
+          mod.updateLanguage(window.app.getLanguage());
+        }
+      });
+
+      var isOpt = localStorage.getItem('wallet_os_opt') === '1';
+      document.body.classList.toggle('theme-optimized', isOpt);
+      optBtn.setAttribute('aria-pressed', String(isOpt));
+      optBtn.addEventListener('click', function () {
+        isOpt = !document.body.classList.contains('theme-optimized');
+        document.body.classList.toggle('theme-optimized', isOpt);
+        optBtn.setAttribute('aria-pressed', String(isOpt));
+        localStorage.setItem('wallet_os_opt', isOpt ? '1' : '0');
+        if (mod && typeof mod.updateLanguage === 'function') {
+          mod.updateLanguage(window.app.getLanguage());
+        }
+      });
+
+      var isLite = localStorage.getItem('wallet_os_lite') === '1';
+      document.body.classList.toggle('perf-lite', isLite);
+      liteBtn.setAttribute('aria-pressed', String(isLite));
+      liteBtn.addEventListener('click', function () {
+        isLite = !document.body.classList.contains('perf-lite');
+        document.body.classList.toggle('perf-lite', isLite);
+        liteBtn.setAttribute('aria-pressed', String(isLite));
+        localStorage.setItem('wallet_os_lite', isLite ? '1' : '0');
+      });
+
+      function syncLangBtn(lang) {
+        document.getElementById('st-lang-code').textContent = lang === 'en' ? 'EN' : 'VI';
+      }
+      syncLangBtn(window.app.getLanguage());
+
+      langBtn.addEventListener('click', function () {
+        var next = window.app.getLanguage() === 'vi' ? 'en' : 'vi';
+        localStorage.setItem('hub_system_language', next);
+        localStorage.setItem('hubos_lang', next);
+        syncLangBtn(next);
+        window.dispatchEvent(new CustomEvent('hubLanguageChanged', { detail: next }));
+      });
+
+      document.getElementById('st-backup').addEventListener('click', async function () {
+        var data = await window.HubDB.loadCashFlowData();
+        var meta = await window.HubDB.loadCashFlowMeta();
+        var payload = {
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          data: data,
+          meta: meta
+        };
+        var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'WalletOS_Backup_' + new Date().toISOString().slice(0, 10) + '.json';
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+
+      var restoreInput = document.getElementById('st-restore-input');
+      document.getElementById('st-restore').addEventListener('click', function () {
+        restoreInput.click();
+      });
+      restoreInput.addEventListener('change', function (e) {
+        var file = e.target.files && e.target.files[0];
+        if (!file) return;
+        var reader = new FileReader();
+        reader.onload = async function (ev) {
+          try {
+            var parsed = JSON.parse(ev.target.result);
+            if (parsed.data) await window.HubDB.saveCashFlowData(parsed.data);
+            if (parsed.meta) await window.HubDB.saveCashFlowMeta(parsed.meta);
+            if (parsed.data && Array.isArray(parsed.data.goals)) {
+              localStorage.setItem('hub_cf_goals_backup_v1', JSON.stringify(parsed.data.goals));
+            }
+            location.reload();
+          } catch (err) {
+            alert('File JSON không hợp lệ!');
+          }
+        };
+        reader.readAsText(file);
+      });
+    });
+  </script>
+</body>
+</html>
