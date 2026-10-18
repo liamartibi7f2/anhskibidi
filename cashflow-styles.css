@@ -4155,9 +4155,25 @@ button, [role="tab"], select, summary, label[for] {
     border-radius: 22px 22px 0 0;
     padding-bottom: calc(20px + env(safe-area-inset-bottom));
   }
+  /* Popover bộ lọc (Amount, Date...): JS đặt left/top inline theo nút nên dễ lòi ra mép
+     màn hình -> trên mobile ghim thành khay nổi sát đáy, luôn nằm gọn trong viewport */
   :root body .hub-cf-filter-popover {
-    max-width: calc(100vw - 16px);
+    position: fixed !important;
+    left: 8px !important;
+    right: 8px !important;
+    top: auto !important;
+    bottom: calc(12px + env(safe-area-inset-bottom)) !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    max-height: 70dvh;
+    overflow-y: auto;
+    transform: none !important;
+    margin: 0 !important;
+    box-sizing: border-box;
+    z-index: 1000;
   }
+  :root body .hub-cf-filter-popover input { min-width: 0; font-size: 16px; }
 
   /* Ngăn kéo ngân sách: toàn màn hình */
   :root body .hub-cf-bs-panel { width: 100vw; border-radius: 0; }
