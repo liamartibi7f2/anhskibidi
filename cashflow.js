@@ -9654,7 +9654,15 @@ ${_aiShellHTML()}
       cash:     'Phân tích dòng tiền mặt và ngân hàng của tôi. Tôi nên giữ bao nhiêu tiền mặt?',
       savings:  'Tôi đang có một khoản tiền tiết kiệm. Tôi nên làm gì để nó phát huy hiệu quả và không bị tiêu hao dần?',
       overCap:  'Tôi đã vượt trần chi tiêu tháng này. Hãy đưa ra phương án cứu vãn cụ thể cho những ngày còn lại.',
-      goals:    'Các mục tiêu tiết kiệm của tôi có kịp hạn không? Với tốc độ hiện tại tôi cần điều chỉnh gì cho từng mục tiêu?'
+      goals:    'Các mục tiêu tiết kiệm của tôi có kịp hạn không? Với tốc độ hiện tại tôi cần điều chỉnh gì cho từng mục tiêu?',
+      overIncome: 'Tôi đang chi nhiều hơn thu nhập. Hãy giúp tôi cân bằng lại thu chi với các bước cụ thể.',
+      runway:   'Số dư hiện tại của tôi có đủ dùng đến cuối tháng không? Hãy đề xuất mức chi mỗi ngày để không bị hụt tiền.',
+      spike:    'Chi tiêu 7 ngày gần đây của tôi tăng mạnh. Nguyên nhân có thể là gì và tôi nên làm gì để kéo lại?',
+      bigSpend: 'Tôi vừa có một khoản chi lớn trong tháng. Tôi nên điều chỉnh chi tiêu những ngày còn lại thế nào?',
+      housing:  'Chi phí nhà ở đang chiếm tỷ trọng lớn trong thu nhập của tôi. Tôi nên cân đối các khoản còn lại ra sao?',
+      small:    'Các khoản chi nhỏ lặt vặt của tôi đang chiếm khá nhiều. Làm sao để giảm mà không ảnh hưởng sinh hoạt?',
+      income:   'Thu nhập tháng này của tôi thấp hơn bình thường. Tôi nên điều chỉnh chi tiêu và ngân sách thế nào?',
+      reserve:  'Quỹ dự phòng của tôi có đủ không? Tôi nên xây quỹ dự phòng thế nào với thu nhập hiện tại?'
     },
     en: {
       summary:  'Summarize my income and expenses this month and highlight the most notable insight.',
@@ -9664,7 +9672,15 @@ ${_aiShellHTML()}
       cash:     'Analyze my cash vs. bank flow. How much physical cash should I keep on hand?',
       savings:  'I have a savings balance. How should I allocate and protect it effectively?',
       overCap:  'I have exceeded my spending cap this month. Give me a concrete recovery plan for the remaining days.',
-      goals:    'Are my savings goals on track? Based on my current pace, what should I adjust for each goal?'
+      goals:    'Are my savings goals on track? Based on my current pace, what should I adjust for each goal?',
+      overIncome: 'I am spending more than I earn. Help me rebalance my income and expenses with concrete steps.',
+      runway:   'Will my current balance last until the end of the month? Suggest a daily spending level so I do not run short.',
+      spike:    'My spending over the last 7 days jumped. What could be the cause and how do I bring it back down?',
+      bigSpend: 'I had a large expense this month. How should I adjust my spending for the remaining days?',
+      housing:  'Housing takes a large share of my income. How should I balance my other spending?',
+      small:    'Small everyday purchases make up a big part of my spending. How can I cut them without hurting my routine?',
+      income:   'My income this month is lower than usual. How should I adjust my spending and budget?',
+      reserve:  'Is my emergency fund enough? How should I build one with my current income?'
     }
   };
 
@@ -9866,6 +9882,188 @@ ${_aiShellHTML()}
     };
   }
 
+  // ── Cảnh báo / gợi ý bổ sung: đơn giản, ngưỡng thận trọng, chỉ hiện khi thật sự đáng chú ý ──
+  function _aiExtraActions(p, A) {
+    if (p.isFuture) return;
+    var F = _formatVNFull;
+    var en = _getCFLang() === 'en';
+    function T(vi, e) { return en ? e : vi; }
+    function add(level, title, body, key) { A.push({ level: level, title: title, body: body, prompt: key ? _getAIPrompt(key) : undefined }); }
+    function pct(a, b) { return b > 0 ? Math.round((a / b) * 100) : 0; }
+
+    var inc = p.incomeBase;
+    var spent = p.cur.spent;
+    var txs = _getMonthTransactions(p.ym.year, p.ym.month);
+    var exps = txs.filter(function (tx) { return tx.type !== 'income' && tx.category !== 'tiet-kiem' && tx.category !== 'cho-vay'; });
+    var liquid = p.balances.cash + p.balances.bank;
+    var housing = p.cur.byCat['nha-o'] || 0;
+    var settled = !p.isCurrent || p.daysElapsed >= 10;   // tránh báo động oan đầu tháng khi lương chưa về
+
+    // 1) Chi vượt thu nhập (thực tế) / dự báo vượt thu nhập
+    if (p.cur.income > 0 && spent > p.cur.income && settled) {
+      add('danger',
+        T('Chi tiêu đã vượt thu nhập tháng này', 'Spending already exceeds this month’s income'),
+        T('Đã chi ' + F(spent) + ' so với thu ' + F(p.cur.income) + ' — phần chênh đang lấy từ số dư hoặc tiết kiệm.', 'Spent ' + F(spent) + ' vs. income ' + F(p.cur.income) + ' — the gap is coming from your balance or savings.'),
+        'overIncome');
+    } else if (p.isCurrent && inc > 0 && p.daysElapsed >= 7 && p.projectedSpend > inc) {
+      add('warn',
+        T('Dự báo chi vượt cả thu nhập', 'Projected to spend more than you earn'),
+        T('Với tốc độ hiện tại sẽ chi ≈ ' + F(p.projectedSpend) + ', cao hơn thu nhập ' + F(inc) + '.', 'At this pace you will spend ≈ ' + F(p.projectedSpend) + ', above your income of ' + F(inc) + '.'),
+        'forecast');
+    }
+
+    // 2) Số dư không đủ đến cuối tháng / số dư âm
+    if (liquid < 0) {
+      add('warn',
+        T('Số dư tiền mặt + ngân hàng đang âm', 'Cash + bank balance is negative'),
+        T('Kiểm tra lại số dư đầu kỳ hoặc khoản thu còn thiếu chưa ghi.', 'Check your starting balances or any income you have not logged yet.'));
+    } else if (p.isCurrent && p.daysElapsed >= 5 && p.burn > 0 && liquid > 0) {
+      var runway = liquid / p.burn;
+      if (runway < p.remainingDays && runway < 14) {
+        var rd = Math.max(1, Math.floor(runway));
+        add(runway < 5 ? 'danger' : 'warn',
+          T('Số dư chỉ đủ khoảng ' + rd + ' ngày', 'Balance covers only ~' + rd + (rd === 1 ? ' day' : ' days')),
+          T('Tiền mặt + ngân hàng ≈ ' + F(liquid) + ', chi trung bình ≈ ' + F(p.burn) + '/ngày, còn ' + p.remainingDays + ' ngày trong tháng.', 'Cash + bank ≈ ' + F(liquid) + ', spending ≈ ' + F(p.burn) + '/day, with ' + p.remainingDays + ' days left in the month.'),
+          'runway');
+      }
+    }
+
+    // 3) Chi tăng đột biến trong 7 ngày gần đây
+    if (p.isCurrent && p.daysElapsed >= 12) {
+      var from = p.daysElapsed - 6, rec = 0, old = 0;
+      exps.forEach(function (tx) {
+        if (tx.category === 'nha-o') return;
+        if ((tx.day || 0) >= from) rec += Number(tx.amount) || 0; else old += Number(tx.amount) || 0;
+      });
+      var baseWeek = (from - 1) > 0 ? (old / (from - 1)) * 7 : 0;
+      if (baseWeek > 0 && rec > baseWeek * 1.8 && rec >= (inc > 0 ? inc * 0.08 : 200000)) {
+        add('warn',
+          T('7 ngày gần đây chi cao gấp ' + (rec / baseWeek).toFixed(1) + ' lần bình thường', 'Last 7 days: spending ' + (rec / baseWeek).toFixed(1) + '× your usual'),
+          T('≈ ' + F(rec) + ' so với mức trung bình tuần trước đó ≈ ' + F(baseWeek) + '.', '≈ ' + F(rec) + ' vs. a typical earlier week of ≈ ' + F(baseWeek) + '.'),
+          'spike');
+      }
+    }
+
+    // 4) Vượt hạn mức chi mỗi ngày (chỉ khi người dùng tự đặt hạn mức)
+    var mk = p.ym.year + '-' + String(p.ym.month).padStart(2, '0');
+    var userLimit = _cashFlowMeta.dailyLimits && Number(_cashFlowMeta.dailyLimits[mk]);
+    if (userLimit > 0) {
+      var byDay = {};
+      exps.forEach(function (tx) { if (tx.category !== 'nha-o') byDay[tx.day] = (byDay[tx.day] || 0) + (Number(tx.amount) || 0); });
+      var overDays = Object.keys(byDay).filter(function (d) { return byDay[d] > userLimit; }).length;
+      if (overDays >= 3) {
+        add('warn',
+          T('Vượt hạn mức ngày ' + overDays + ' lần', 'Daily limit exceeded ' + overDays + ' times'),
+          T('Hạn mức bạn đặt là ' + F(userLimit) + '/ngày. Thử giữ ngày chi nhiều nhất dưới mức này.', 'Your limit is ' + F(userLimit) + '/day. Try to keep your biggest days under it.'),
+          'cut');
+      }
+    }
+
+    // 5) Một khoản chi rất lớn (không tính nhà ở)
+    if (inc > 0) {
+      var big = null;
+      exps.forEach(function (tx) { if (tx.category !== 'nha-o' && (!big || (Number(tx.amount) || 0) > (Number(big.amount) || 0))) big = tx; });
+      if (big && Number(big.amount) >= inc * 0.25) {
+        add(Number(big.amount) >= inc * 0.4 ? 'warn' : 'info',
+          T('Có một khoản chi lớn: ' + _categoryDisplayName(big.category, 'expense'), 'One large expense: ' + _categoryDisplayName(big.category, 'expense')),
+          T(F(big.amount) + ' (≈ ' + pct(big.amount, inc) + '% thu nhập). Cân đối lại các ngày còn lại cho khỏi hụt.', F(big.amount) + ' (≈ ' + pct(big.amount, inc) + '% of income). Rebalance the remaining days so you do not run short.'),
+          'bigSpend');
+      }
+    }
+
+    // 6) Nhà ở chiếm tỷ trọng cao
+    if (inc > 0 && housing > inc * 0.4) {
+      add(housing > inc * 0.5 ? 'warn' : 'info',
+        T('Nhà ở chiếm ' + pct(housing, inc) + '% thu nhập', 'Housing takes ' + pct(housing, inc) + '% of income'),
+        T('Thường nên ≤ 35–40%. Phần còn lại cho ăn uống, đi lại và tiết kiệm sẽ khá chật.', 'Usually ≤ 35–40% is recommended; little room is left for food, transport and savings.'),
+        'housing');
+    }
+
+    // 7) Một hạng mục chiếm quá nửa chi tiêu (không tính nhà ở)
+    var nonHousing = spent - housing;
+    var topCat = p.cats.filter(function (c) { return c.id !== 'nha-o'; })[0];
+    if (topCat && p.cur.count >= 8 && p.cats.length >= 3 && nonHousing > 0 && topCat.amount / nonHousing >= 0.55) {
+      add('info',
+        T('“' + topCat.name + '” chiếm ' + pct(topCat.amount, nonHousing) + '% chi tiêu', '“' + topCat.name + '” is ' + pct(topCat.amount, nonHousing) + '% of spending'),
+        T('Đây là chỗ dễ tối ưu nhất: giảm 10% hạng mục này ≈ ' + F(topCat.amount * 0.1) + '.', 'Easiest place to save: cutting 10% here ≈ ' + F(topCat.amount * 0.1) + '.'),
+        'cut');
+    }
+
+    // 8) Chi nhỏ lặt vặt cộng dồn
+    var small = exps.filter(function (tx) { var a = Number(tx.amount) || 0; return a > 0 && a <= 50000; });
+    var smallSum = small.reduce(function (t, tx) { return t + (Number(tx.amount) || 0); }, 0);
+    if (small.length >= 20 && spent > 0 && smallSum >= spent * 0.2) {
+      add('info',
+        T('Chi nhỏ cộng lại ≈ ' + F(smallSum), 'Small purchases add up to ≈ ' + F(smallSum)),
+        T(small.length + ' giao dịch ≤ 50.000 ₫ chiếm ' + pct(smallSum, spent) + '% tổng chi. Giảm tần suất sẽ thấy rõ hiệu quả.', small.length + ' purchases ≤ 50,000 ₫ make up ' + pct(smallSum, spent) + '% of spending. Fewer of them makes a visible difference.'),
+        'small');
+    }
+
+    // 9) Thu nhập thấp hơn hẳn bình thường (người thu nhập không đều)
+    var hist = [1, 2, 3].map(function (k) { var sh = _aiShiftMonth(p.ym, -k); return _aiMonthAgg(sh.year, sh.month).income; }).filter(function (v) { return v > 0; });
+    var avgInc = hist.length >= 2 ? hist.reduce(function (a, b) { return a + b; }, 0) / hist.length : 0;
+    if (avgInc > 0 && p.cur.income > 0 && p.cur.income < avgInc * 0.6 && (!p.isCurrent || p.daysElapsed >= 20)) {
+      add('warn',
+        T('Thu nhập thấp hơn trung bình ' + (100 - pct(p.cur.income, avgInc)) + '%', 'Income is ' + (100 - pct(p.cur.income, avgInc)) + '% below your average'),
+        T('Thu ' + F(p.cur.income) + ' so với trung bình 3 tháng ' + F(avgInc) + '. Tháng thu thấp nên chi theo mức thu thấp nhất.', 'Income ' + F(p.cur.income) + ' vs. 3-month average ' + F(avgInc) + '. In lean months, plan around your lowest income.'),
+        'income');
+    }
+
+    // 10) Quỹ dự phòng mỏng
+    var reserve = liquid + (p.balances.savings || 0);
+    var monthly = Math.max(p.prev.spent, spent);
+    if (liquid >= 0 && reserve > 0 && monthly > 0 && reserve < monthly) {
+      add('info',
+        T('Quỹ dự phòng chưa đủ 1 tháng chi tiêu', 'Emergency fund is under 1 month of spending'),
+        T('Số dư + tiết kiệm ≈ ' + F(reserve) + ', chi một tháng ≈ ' + F(monthly) + '. Nên hướng tới 3 tháng.', 'Balance + savings ≈ ' + F(reserve) + ' vs. ≈ ' + F(monthly) + ' spent per month. Aim for 3 months.'),
+        'reserve');
+    }
+
+    // 11) Chưa để dành khoản nào / sắp hết tháng còn dư / để dành rất tốt
+    if (p.isCurrent && p.daysElapsed >= 15 && p.cur.income > 0 && p.cur.saved <= 0 && p.savingsRate !== null && p.savingsRate < p.targetRate) {
+      add('info',
+        T('Chưa để dành khoản nào tháng này', 'Nothing saved yet this month'),
+        T('Thử “trả cho mình trước”: chuyển ≈ ' + F(p.cur.income * p.targetRate / 100) + ' vào tiết kiệm ngay khi có thu nhập.', 'Try “pay yourself first”: move ≈ ' + F(p.cur.income * p.targetRate / 100) + ' into savings as soon as income arrives.'),
+        'savings');
+    }
+    if (p.isCurrent && p.remainingDays <= 5 && p.remaining > 0 && inc > 0) {
+      add('info',
+        T('Sắp hết tháng, còn dư ' + F(p.remaining) + ' trong trần chi', 'Month almost over, ' + F(p.remaining) + ' left under cap'),
+        T('Chuyển phần dư vào tiết kiệm hoặc mục tiêu thay vì để tiêu dần.', 'Move the leftover into savings or a goal instead of letting it get spent.'),
+        'savings');
+    }
+    if (p.isCurrent && p.daysElapsed >= 20 && p.savingsRate !== null && p.savingsRate >= p.targetRate + 15) {
+      add('ok',
+        T('Để dành rất tốt: ' + p.savingsRate.toFixed(0) + '%', 'Great saving pace: ' + p.savingsRate.toFixed(0) + '%'),
+        T('Vượt mục tiêu ' + p.targetRate + '%. Cân nhắc đặt thêm mục tiêu hoặc quỹ dự phòng cho phần dư.', 'Above your ' + p.targetRate + '% target. Consider a new goal or emergency fund for the surplus.'),
+        'savings');
+    }
+
+    // 12) Nợ sắp đến hạn thu (trong 7 ngày)
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    var dueSoon = p.debts.list.filter(function (d) {
+      if (d.overdue || !d.due) return false;
+      var dt = new Date(String(d.due) + 'T00:00:00');
+      if (isNaN(dt.getTime())) return false;
+      var diff = Math.round((dt - today) / 86400000);
+      return diff >= 0 && diff <= 7;
+    });
+    if (dueSoon.length) {
+      var dueSum = dueSoon.reduce(function (t, d) { return t + d.amount; }, 0);
+      add('info',
+        T(dueSoon.length + ' khoản nợ sắp đến hạn thu', dueSoon.length + ' loan(s) due within 7 days'),
+        T('Tổng ≈ ' + F(dueSum) + '. Nhắc người mượn trước hạn để kịp dòng tiền.', 'Total ≈ ' + F(dueSum) + '. Remind the borrower ahead of time to protect your cash flow.'));
+    }
+
+    // 13) Nhóm “Chi phí khác” quá lớn
+    var other = p.cats.filter(function (c) { return c.id === 'chi-phi-khac'; })[0];
+    if (other && other.share >= 25 && p.cur.count >= 8) {
+      add('info',
+        T('“' + other.name + '” chiếm ' + Math.round(other.share) + '% chi tiêu', '“' + other.name + '” is ' + Math.round(other.share) + '% of spending'),
+        T('Phân loại lại các khoản này để phân tích chính xác hơn.', 'Re-categorize these so the analysis is more accurate.'));
+    }
+  }
+
   function _aiBuildActions(p) {
     var A = [];
     var F = _formatVNFull;
@@ -9994,9 +10192,11 @@ ${_aiShellHTML()}
       }
     } catch (_) {}
 
+    try { _aiExtraActions(p, A); } catch (err) { console.warn('[CashFlow AI] extra analysis skipped:', err); }
+
     var rank = { danger: 0, warn: 1, info: 2, ok: 3 };
     A.sort(function (a, b) { return rank[a.level] - rank[b.level]; });
-    return A.slice(0, 5);
+    return A.slice(0, 6);
   }
 
   function _aiTone(level) { return 'is-' + level; }
