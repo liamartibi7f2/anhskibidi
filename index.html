@@ -112,18 +112,19 @@
       'use strict';
 
       // ====================================================================
-      // THAY CẤU HÌNH FIREBASE CỦA BẠN VÀO ĐÂY:
+      // CẤU HÌNH FIREBASE CỦA BẠN (ĐÃ SỬA CHUẨN):
       // ====================================================================
       var firebaseConfig = {
         apiKey: "AIzaSyA-OzyenFKXldv5p5WxFAIJ6dM4ZVucrGU",
         authDomain: "financial-performaces.firebaseapp.com",
         projectId: "financial-performaces",
         storageBucket: "financial-performaces.firebasestorage.app",
-        messagingSenderId: "1:383668604427:web:b20664ddd1d8f63522c10e",
-        appId: "G-MC56TNVCZ3"
+        messagingSenderId: "383668604427",
+        appId: "1:383668604427:web:b20664ddd1d8f63522c10e",
+        measurementId: "G-MC56TNVCZ3"
       };
 
-      var isFirebaseConfigured = firebaseConfig.apiKey && firebaseConfig.apiKey !== "AIzaSyA-OzyenFKXldv5p5WxFAIJ6dM4ZVucrGU";
+      var isFirebaseConfigured = Boolean(firebaseConfig.apiKey && firebaseConfig.apiKey !== "THAY_API_KEY_CUA_BAN");
       var auth = null;
       var db = null;
       var currentUser = null;
