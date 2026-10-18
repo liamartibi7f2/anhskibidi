@@ -10320,6 +10320,11 @@ ${_aiShellHTML()}
     return { system: system, context: context, history: history, user: userQuery, flat: flat };
   }
 
+  var _AI_RETRY_STATUS = [429, 500, 502, 503];          // thử lại cùng model
+  var _AI_FALLBACK_STATUS = [404, 429, 500, 502, 503];  // đổi sang model dự phòng
+  var _GEMINI_MODELS = ['gemini-3.7-flash', 'gemini-3.8-flash', 'gemini-3.6-flash'];
+  var _aiPreviewText = '', _aiPreviewRaf = 0;   // xem trước câu trả lời khi đang stream
+
   async function _resilientFetch(url, options, config) {
     options = options || {};
     config = config || {};
@@ -10339,6 +10344,11 @@ ${_aiShellHTML()}
       try {
         var response = await fetch(url, Object.assign({}, options, { signal: signal, keepalive: false }));
         clearTimeout(timeoutId);
+        // Server quá tải / lỗi tạm thời: chờ rồi thử lại (504 bỏ qua vì đã chờ rất lâu)
+        if (attempt < maxRetries && _AI_RETRY_STATUS.indexOf(response.status) !== -1) {
+          await new Promise(function (r) { setTimeout(r, retryDelay * (attempt + 1) + Math.floor(Math.random() * 400)); });
+          continue;
+        }
         return response;
       } catch (err) {
         clearTimeout(timeoutId);
@@ -10350,60 +10360,196 @@ ${_aiShellHTML()}
     throw lastError;
   }
 
-  async function _callGeminiAPI(req, apiKey, signal) {
+  // ── Tiện ích dùng chung cho Gemini / Nvidia (stream + timeout) ──
+  function _aiStripThink(t) { return String(t || '').replace(/<think>[\s\S]*?(<\/think>|$)/g, '').trim(); }
+
+  function _aiSleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  // Bộ hẹn giờ: arm(ms) = nếu quá ms mà không có tiến triển thì huỷ request; nối thêm signal "dừng" của người dùng
+  function _aiTimer(signal) {
+    var ctrl = new AbortController(), t = null, state = { timedOut: false };
+    if (signal) {
+      if (signal.aborted) ctrl.abort();
+      else signal.addEventListener('abort', function () { ctrl.abort(); }, { once: true });
+    }
+    return {
+      signal: ctrl.signal,
+      state: state,
+      arm: function (ms) { clearTimeout(t); t = setTimeout(function () { state.timedOut = true; ctrl.abort(); }, ms); },
+      clear: function () { clearTimeout(t); }
+    };
+  }
+
+  function _aiTimeoutError() {
+    var e = new Error(_getCFLang() === 'en' ? 'AI service did not respond in time.' : 'Dịch vụ AI không phản hồi kịp.');
+    e.name = 'TimeoutError';
+    return e;
+  }
+
+  // Đọc luồng SSE: gọi onPayload(chuỗi JSON) cho từng dòng "data:"; trả true để dừng sớm
+  async function _aiReadSSE(response, tm, onPayload, idleMs) {
+    var reader = response.body.getReader();
+    var decoder = new TextDecoder();
+    var buf = '', stop = false;
+
+    function feed(line) {
+      line = line.trim();
+      if (line.indexOf('data:') !== 0) return false;
+      return onPayload(line.slice(5).trim()) === true;
+    }
+
+    while (!stop) {
+      tm.arm(idleMs); // quá idleMs không nhận thêm dữ liệu nào -> coi như treo
+      var chunk = await reader.read();
+      if (chunk.done) break;
+      buf += decoder.decode(chunk.value, { stream: true });
+      var lines = buf.split('\n');
+      buf = lines.pop();
+      for (var i = 0; i < lines.length; i++) {
+        if (feed(lines[i])) { stop = true; break; }
+      }
+    }
+    if (stop) { try { reader.cancel(); } catch (_) {} }
+    else if (buf.trim()) feed(buf);
+  }
+
+  async function _callGeminiAPI(req, apiKey, signal, onProgress) {
+    var en = _getCFLang() === 'en';
+    var noReply = en ? 'No response from AI.' : 'Không có phản hồi từ AI.';
     var contents = req.history.concat([{ role: 'user', text: req.user }]).map(function (m) {
       return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.text }] };
     });
+    var body = JSON.stringify({
+      systemInstruction: { parts: [{ text: req.system + '\n\n=== FINANCIAL DATA (JSON) ===\n' + req.context }] },
+      contents: contents,
+      generationConfig: { maxOutputTokens: 2048, temperature: 0.6, thinkingConfig: { thinkingLevel: 'low' } }
+    });
 
-    var response = await _resilientFetch(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent?key=' + encodeURIComponent(apiKey),
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: req.system + '\n\n=== FINANCIAL DATA (JSON) ===\n' + req.context }] },
-          contents: contents,
-          generationConfig: { maxOutputTokens: 2048, temperature: 0.6 }
-        })
-      },
-      { timeout: 60000, maxRetries: 2, signal: signal }
-    );
+    var tm = _aiTimer(signal);
+    try {
+      // Model chính quá tải -> thử lại 1 lần -> đổi sang model dự phòng
+      var response;
+      for (var mi = 0; mi < _GEMINI_MODELS.length; mi++) {
+        for (var attempt = 0; attempt < 2; attempt++) {
+          tm.arm(30000); // chờ Gemini bắt đầu trả lời
+          response = await fetch(
+            'https://generativelanguage.googleapis.com/v1beta/models/' + _GEMINI_MODELS[mi] + ':streamGenerateContent?alt=sse&key=' + encodeURIComponent(apiKey),
+            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body, signal: tm.signal }
+          );
+          if (attempt === 1 || _AI_RETRY_STATUS.indexOf(response.status) === -1) break;
+          await _aiSleep(1500 + Math.floor(Math.random() * 400));
+        }
+        if (response.ok || _AI_FALLBACK_STATUS.indexOf(response.status) === -1) break;
+      }
 
-    if (!response.ok) {
-      var error = await response.json().catch(function () { return {}; });
-      throw new Error('Gemini API error: ' + response.status + ' - ' + ((error.error && error.error.message) || response.statusText));
+      if (!response.ok) {
+        var error = await response.json().catch(function () { return {}; });
+        throw new Error('Gemini API error: ' + response.status + ' - ' + ((error.error && error.error.message) || response.statusText));
+      }
+
+      var text = '', blockReason = null;
+      await _aiReadSSE(response, tm, function (payload) {
+        var j = null;
+        try { j = JSON.parse(payload); } catch (_) { return false; }
+        if (j && j.error) throw new Error('Gemini API error: ' + (j.error.status || '') + ' - ' + (j.error.message || ''));
+        if (j && j.promptFeedback && j.promptFeedback.blockReason) blockReason = j.promptFeedback.blockReason;
+        var cand = j && j.candidates && j.candidates[0];
+        var parts = cand && cand.content && cand.content.parts;
+        if (parts) parts.forEach(function (p) { if (p.text && !p.thought) text += p.text; });
+        if (onProgress && text) onProgress(text);
+        return false;
+      }, 45000);
+
+      if (!text && blockReason) {
+        throw new Error(en ? ('Request blocked by safety filter (' + blockReason + ').') : ('Yêu cầu bị chặn bởi bộ lọc an toàn (' + blockReason + ').'));
+      }
+      return text || noReply;
+    } catch (err) {
+      if (tm.state.timedOut) throw _aiTimeoutError();
+      throw err;
+    } finally {
+      tm.clear();
     }
-
-    var data = await response.json();
-    var cand = data.candidates && data.candidates[0];
-    var text = cand && cand.content && cand.content.parts ? cand.content.parts.map(function (p) { return p.text || ''; }).join('') : '';
-    var en = _getCFLang() === 'en';
-    if (!text && data.promptFeedback && data.promptFeedback.blockReason) {
-      throw new Error(en ? ('Request blocked by safety filter (' + data.promptFeedback.blockReason + ').') : ('Yêu cầu bị chặn bởi bộ lọc an toàn (' + data.promptFeedback.blockReason + ').'));
-    }
-    return text || (en ? 'No response from AI.' : 'Không có phản hồi từ AI.');
   }
 
-  async function _callNvidiaAPI(req, apiKey, signal) {
-    var response = await _resilientFetch('https://personal-hub-rose-xi.vercel.app/api/ask-nvidia', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ apiKey: apiKey, systemPrompt: req.flat })
-    }, { timeout: 120000, maxRetries: 1, signal: signal });
+  // Proxy ask-nvidia trả về luồng SSE (stream); vẫn đọc được bản proxy cũ trả JSON thường
+  async function _callNvidiaAPI(req, apiKey, signal, onProgress) {
+    var en = _getCFLang() === 'en';
+    var noReply = en ? 'No response from AI.' : 'Không có phản hồi từ AI.';
+    var tm = _aiTimer(signal);
+    try {
+      var response;
+      for (var attempt = 0; attempt < 2; attempt++) {
+        tm.arm(35000); // chờ proxy bắt đầu trả lời
+        response = await fetch('https://personal-hub-rose-xi.vercel.app/api/ask-nvidia', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ apiKey: apiKey, systemPrompt: req.flat }),
+          signal: tm.signal
+        });
+        if (attempt === 1 || _AI_RETRY_STATUS.indexOf(response.status) === -1) break;
+        await _aiSleep(2000);
+      }
 
-    if (!response.ok) {
-      var error = await response.json().catch(function () { return {}; });
-      throw new Error('Nvidia API error: ' + response.status + ' - ' + (error.message || response.statusText));
+      if (!response.ok) {
+        var error = await response.json().catch(function () { return {}; });
+        throw new Error('Nvidia API error: ' + response.status + ' - ' + (error.error || error.message || response.statusText));
+      }
+
+      if ((response.headers.get('content-type') || '').indexOf('text/event-stream') === -1) {
+        var data = await response.json();
+        var plain = data.response || (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content);
+        return _aiStripThink(plain) || noReply;
+      }
+
+      var text = '';
+      await _aiReadSSE(response, tm, function (payload) {
+        if (payload === '[DONE]') return true;
+        var j = null;
+        try { j = JSON.parse(payload); } catch (_) { return false; }
+        if (j && j.error) throw new Error('Nvidia API error: ' + (j.error.message || j.error));
+        var delta = j && j.choices && j.choices[0] && j.choices[0].delta;
+        if (delta && typeof delta.content === 'string') text += delta.content; // bỏ qua reasoning_content
+        if (onProgress && text) onProgress(_aiStripThink(text));
+        return false;
+      }, 45000);
+      return _aiStripThink(text) || noReply;
+    } catch (err) {
+      if (tm.state.timedOut) throw _aiTimeoutError();
+      throw err;
+    } finally {
+      tm.clear();
     }
-    var data = await response.json();
-    return data.response || (_getCFLang() === 'en' ? 'No response from AI.' : 'Không có phản hồi từ AI.');
+  }
+
+  function _aiStreamPreview(text) {
+    _aiPreviewText = text;
+    if (_aiPreviewRaf) return;
+    _aiPreviewRaf = requestAnimationFrame(function () {
+      _aiPreviewRaf = 0;
+      if (!_aiPreviewText) return;
+      var out = _qs('#hub-cf-ai-output');
+      var bubble = out && out.querySelector('[data-loading] .cfx-msg__bubble');
+      if (!bubble) return;
+      if (_aiState._loadingTimer) { clearInterval(_aiState._loadingTimer); _aiState._loadingTimer = null; }
+      bubble.classList.remove('cfx-typing');
+      bubble.classList.add('cfx-md');
+      bubble.innerHTML = _aiMarkdown(_aiPreviewText);
+      out.scrollTop = out.scrollHeight;
+    });
   }
 
   function _aiFriendlyError(err) {
     var en = _getCFLang() === 'en';
     var msg = String((err && err.message) || err || '');
+    if (err && err.name === 'TimeoutError') {
+      return en ? 'The AI service did not respond in time. Please try again or switch models.' : 'Dịch vụ AI không phản hồi kịp. Hãy thử lại hoặc đổi mô hình.';
+    }
     if (/401|403|API key|api_key|permission|unauthor/i.test(msg)) {
       return en ? 'Invalid or expired API key. Open Settings (key icon) to check your key.' : 'API key không hợp lệ hoặc đã hết hạn. Mở Cài đặt (biểu tượng chìa khoá) để kiểm tra lại.';
+    }
+    if (/503|overload|UNAVAILABLE|high demand/i.test(msg)) {
+      return en ? 'The AI service is overloaded right now. Please try again in a moment or switch models.' : 'Dịch vụ AI đang quá tải. Hãy thử lại sau ít giây hoặc đổi mô hình.';
     }
     if (/429|quota|rate/i.test(msg)) {
       return en ? 'AI rate limit reached. Please try again in a few minutes or switch models.' : 'Đã chạm giới hạn truy cập của dịch vụ AI. Hãy thử lại sau ít phút hoặc đổi mô hình.';
@@ -10618,6 +10764,7 @@ ${_aiShellHTML()}
   }
 
   function _showAILoading(message) {
+    _aiPreviewText = '';
     var out = _qs('#hub-cf-ai-output');
     if (!out) return;
     _clearAILoading();
@@ -10634,14 +10781,15 @@ ${_aiShellHTML()}
       '</div>');
     out.scrollTop = out.scrollHeight;
 
-    var step = 0;
+    var t0 = Date.now();
     _aiState._loadingTimer = setInterval(function () {
       var t = _qs('.cfx-typing__text');
       if (!t) return;
       var steps = _aiStatusSteps();
-      step = (step + 1) % steps.length;
-      t.textContent = steps[step];
-    }, 2200);
+      var secs = Math.floor((Date.now() - t0) / 1000);
+      var step = Math.floor((Date.now() - t0) / 2200) % steps.length;
+      t.textContent = steps[step] + (secs >= 4 ? ' · ' + secs + 's' : '');
+    }, 1000);
   }
 
   function _clearAILoading() {
@@ -10785,9 +10933,22 @@ ${_aiShellHTML()}
 
     try {
       var req = _aiBuildRequest(userQuery);
-      var responseText = provider === 'nvidia'
-        ? await _callNvidiaAPI(req, apiKey, signal)
-        : await _callGeminiAPI(req, apiKey, signal);
+      var responseText;
+      if (provider === 'nvidia') {
+        try {
+          responseText = await _callNvidiaAPI(req, apiKey, signal, _aiStreamPreview);
+        } catch (nvErr) {
+          // Nvidia treo/quá tải -> tự chuyển sang Gemini nếu đã có key (trừ khi người dùng bấm dừng hoặc sai key)
+          var gKey = _getAIKey('gemini');
+          if (signal.aborted || !gKey || /401|403|API key/i.test(String((nvErr && nvErr.message) || ''))) throw nvErr;
+          console.warn('[CashFlow AI] Nvidia failed, falling back to Gemini:', nvErr);
+          _showToast('Nvidia chưa phản hồi, chuyển sang Gemini…');
+          _showAILoading();
+          responseText = await _callGeminiAPI(req, gKey, signal, _aiStreamPreview);
+        }
+      } else {
+        responseText = await _callGeminiAPI(req, apiKey, signal, _aiStreamPreview);
+      }
 
       if (requestId !== _aiState.requestId) return;
 
