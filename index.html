@@ -13,38 +13,6 @@
   <!-- File CSS độc lập đã lọc gọn -->
   <link rel="stylesheet" href="cashflow-styles.css" />
 
-  <style>
-    .cloud-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      height: 34px;
-      padding: 0 12px;
-      border-radius: 999px;
-      border: 1px solid var(--glass-border);
-      background: var(--bg-elevated);
-      font-family: var(--font-mono);
-      font-size: 0.72rem;
-      font-weight: 600;
-      color: var(--text-secondary);
-      cursor: pointer;
-      transition: border-color 0.2s, color 0.2s;
-    }
-    .cloud-badge:hover {
-      border-color: var(--accent-primary);
-      color: var(--accent-primary);
-    }
-    .cloud-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--warning, #ffb347);
-    }
-    .cloud-dot.is-online {
-      background: var(--success, #44ff88);
-      box-shadow: 0 0 8px var(--success, #44ff88);
-    }
-  </style>
 </head>
 <body>
 
@@ -52,44 +20,60 @@
     <!-- Thanh điều khiển & Đăng nhập Cloud -->
     <header class="standalone-topbar glass">
       <div class="standalone-brand">
-        <span>WALLET<span class="standalone-brand-dot">.OS</span></span>
+        <span class="st-logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></svg>
+        </span>
+        <span class="st-brand-text">
+          <span class="st-wordmark">Wallet<span class="standalone-brand-dot">.OS</span></span>
+          <span class="st-tagline">Personal Finance</span>
+        </span>
       </div>
 
+      <!-- Tài khoản / Trạng thái Cloud -->
+      <button type="button" id="st-auth" class="cloud-badge" title="Đăng nhập Google để đồng bộ đám mây">
+        <span id="st-auth-dot" class="cloud-dot"></span>
+        <span id="st-auth-text">Đăng nhập Cloud</span>
+      </button>
+
       <div class="standalone-controls">
-        <!-- Nút Đăng nhập / Trạng thái Cloud -->
-        <button type="button" id="st-auth" class="cloud-badge" title="Đăng nhập Google để đồng bộ đám mây">
-          <span id="st-auth-dot" class="cloud-dot"></span>
-          <span id="st-auth-text">Đăng nhập Cloud</span>
-        </button>
-
         <!-- Chọn Theme -->
-        <select id="st-theme" class="standalone-select" aria-label="Giao diện">
-          <option value="cyberpunk">⚡ Cyberpunk</option>
-          <option value="solar-zen">☀️ Solar Zen</option>
-          <option value="lofi-twilight">🌙 Lo-Fi Twilight</option>
-        </select>
+        <span class="st-select-wrap">
+          <select id="st-theme" class="standalone-select" aria-label="Giao diện">
+            <option value="cyberpunk">Cyberpunk</option>
+            <option value="solar-zen">Solar Zen</option>
+            <option value="lofi-twilight">Lo-Fi Twilight</option>
+          </select>
+          <svg class="st-chevron" viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+        </span>
 
-        <!-- Bật/tắt chế độ Optimize -->
-        <button type="button" id="st-opt" class="standalone-btn" aria-pressed="false" title="Chế độ Terminal siêu nhẹ">
-          &gt;_ Optimize
+        <!-- Hiệu năng: Optimize / Lite -->
+        <div class="st-seg" role="group" aria-label="Hiệu năng">
+          <button type="button" id="st-opt" class="standalone-btn" aria-pressed="false" title="Chế độ Terminal siêu nhẹ">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+            <span>Optimize</span>
+          </button>
+          <button type="button" id="st-lite" class="standalone-btn" aria-pressed="false" title="Tắt hiệu ứng làm mờ cho máy yếu">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            <span>Lite</span>
+          </button>
+        </div>
+
+        <!-- Ngôn ngữ -->
+        <button type="button" id="st-lang" class="standalone-btn st-solo" title="Đổi ngôn ngữ">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          <span id="st-lang-code">VI</span>
         </button>
 
-        <!-- Bật/tắt chế độ Lite -->
-        <button type="button" id="st-lite" class="standalone-btn" aria-pressed="false" title="Tắt hiệu ứng làm mờ cho máy yếu">
-          Lite
-        </button>
-
-        <!-- Đổi ngôn ngữ VI / EN -->
-        <button type="button" id="st-lang" class="standalone-btn" title="Đổi ngôn ngữ">
-          🇻🇳 VI
-        </button>
+        <span class="st-divider" aria-hidden="true"></span>
 
         <!-- Sao lưu & Khôi phục JSON -->
-        <button type="button" id="st-backup" class="standalone-btn" title="Tải file sao lưu JSON">
-          ⬇ Backup
+        <button type="button" id="st-backup" class="standalone-btn st-solo" title="Tải file sao lưu JSON">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span class="st-label">Backup</span>
         </button>
-        <button type="button" id="st-restore" class="standalone-btn" title="Khôi phục từ file JSON">
-          ⬆ Restore
+        <button type="button" id="st-restore" class="standalone-btn st-solo" title="Khôi phục từ file JSON">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <span class="st-label">Restore</span>
         </button>
         <input type="file" id="st-restore-input" accept=".json" style="display:none" />
       </div>
@@ -394,7 +378,7 @@
       });
 
       function syncLangBtn(lang) {
-        langBtn.textContent = lang === 'en' ? '🇬🇧 EN' : '🇻🇳 VI';
+        document.getElementById('st-lang-code').textContent = lang === 'en' ? 'EN' : 'VI';
       }
       syncLangBtn(window.app.getLanguage());
 
