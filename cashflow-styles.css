@@ -4801,3 +4801,183 @@ body.theme-optimized .st-bottomnav { background: #000; border-top-color: rgba(0,
 
 /* Lite: frames are plain box-shadows (cheap) and stay; hover lift off */
 [data-theme="ember-noir"] body.perf-lite .fcq-choice:hover { transform: none; }
+
+/* ============================================================
+   11. AI — Quản lý cuộc hội thoại (.cfx-convbar / .cfx-hist / .cfx-conv)
+   ============================================================ */
+:root body .cfx-chat { position: relative; height: 620px; }
+
+/* ---- Thanh cuộc trò chuyện hiện tại ---- */
+.cfx-convbar { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 0 auto; }
+.cfx-convbar__hist {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 12px;
+  border-radius: 10px; cursor: pointer; font: inherit; font-size: 0.78rem; font-weight: 600;
+  color: var(--text-secondary); background: var(--cfx-surface-2); border: 1px solid var(--cfx-line);
+  transition: color .2s, border-color .2s, background-color .2s;
+}
+.cfx-convbar__hist b {
+  min-width: 20px; height: 20px; padding: 0 6px; display: inline-grid; place-items: center; border-radius: 99px;
+  font-size: 0.68rem; font-weight: 700; color: var(--cfx-accent); background: var(--cfx-accent-soft);
+}
+.cfx-convbar__hist:hover, .cfx-convbar__hist[aria-expanded="true"] {
+  color: var(--cfx-accent); border-color: var(--cfx-accent-line); background: var(--cfx-accent-soft);
+}
+.cfx-convbar__title { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 4px; }
+.cfx-convbar__name {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 0.86rem; font-weight: 600; color: var(--text-primary);
+}
+.cfx-convbar__name.is-placeholder { color: var(--text-muted); font-weight: 500; }
+.cfx-convbar__btn {
+  flex: 0 0 auto; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; cursor: pointer;
+  color: var(--text-muted); background: transparent; border: 1px solid transparent; transition: all .2s;
+}
+.cfx-convbar__btn:hover { color: var(--cfx-accent); background: var(--cfx-accent-soft); }
+.cfx-convbar__btn.is-ok { color: var(--cfx-accent); border-color: var(--cfx-accent-line); }
+.cfx-convbar__new { width: 36px; height: 36px; color: var(--text-secondary); background: var(--cfx-surface-2); border-color: var(--cfx-line); }
+.cfx-convbar__input {
+  flex: 1 1 auto; min-width: 0; height: 36px; padding: 0 12px; border-radius: 10px; font: inherit; font-size: 0.86rem;
+  color: var(--text-primary); background: var(--cfx-surface-2); border: 1px solid var(--cfx-accent-line); outline: none;
+}
+.cfx-convbar__input:focus { box-shadow: 0 0 0 3px var(--cfx-accent-soft); }
+
+/* ---- Bảng lịch sử (phủ lên khung chat) ---- */
+.cfx-hist {
+  position: absolute; inset: 0; z-index: 6; display: flex; flex-direction: column; gap: 12px; padding: 14px;
+  border-radius: 16px; overflow: hidden;
+  background-color: var(--bg-deep, #0a0a0f);   /* nền đặc để không lộ chữ chat phía sau */
+  background-image: linear-gradient(var(--cfx-surface-2), var(--cfx-surface-2));
+  border: 1px solid var(--cfx-accent-line); box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  animation: cfx-hist-in .22s ease-out;
+}
+.cfx-hist[hidden] { display: none; }
+@keyframes cfx-hist-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.cfx-hist__head { display: flex; align-items: center; gap: 10px; }
+.cfx-hist__head strong { font-size: 0.95rem; color: var(--text-primary); }
+.cfx-hist__count {
+  min-width: 22px; height: 22px; padding: 0 7px; display: inline-grid; place-items: center; border-radius: 99px;
+  font-size: 0.7rem; font-weight: 700; color: var(--cfx-accent); background: var(--cfx-accent-soft);
+}
+.cfx-hist__count:empty { display: none; }
+.cfx-hist__x {
+  margin-left: auto; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; cursor: pointer;
+  color: var(--text-secondary); background: var(--cfx-surface-2); border: 1px solid var(--cfx-line);
+}
+.cfx-hist__x:hover { color: var(--cfx-accent); border-color: var(--cfx-accent-line); }
+.cfx-hist__search {
+  display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border-radius: 12px; color: var(--text-muted);
+  background: var(--cfx-surface-2); border: 1px solid var(--cfx-line);
+}
+.cfx-hist__search:focus-within { border-color: var(--cfx-accent-line); box-shadow: 0 0 0 3px var(--cfx-accent-soft); }
+.cfx-hist__search input {
+  flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent; font: inherit; font-size: 0.86rem; color: var(--text-primary);
+}
+.cfx-hist__list { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding-right: 2px; overscroll-behavior: contain; }
+.cfx-hist__group { display: flex; flex-direction: column; gap: 6px; }
+.cfx-hist__label { padding: 0 4px; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-muted); }
+.cfx-hist__empty { margin: auto; padding: 24px 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; color: var(--text-muted); }
+.cfx-hist__empty svg { color: var(--cfx-accent); opacity: .8; }
+.cfx-hist__empty strong { color: var(--text-primary); font-size: 0.9rem; }
+.cfx-hist__empty span { max-width: 260px; font-size: 0.78rem; line-height: 1.5; }
+.cfx-hist__foot { display: flex; gap: 8px; padding-top: 2px; }
+.cfx-hist__btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 40px; padding: 0 14px; border-radius: 11px; cursor: pointer;
+  font: inherit; font-size: 0.8rem; font-weight: 600; color: var(--text-secondary); background: var(--cfx-surface-2); border: 1px solid var(--cfx-line); transition: all .2s;
+}
+.cfx-hist__btn--primary { flex: 1 1 auto; color: var(--cfx-accent); background: var(--cfx-accent-soft); border-color: var(--cfx-accent-line); }
+.cfx-hist__btn--primary:hover { filter: brightness(1.15); }
+.cfx-hist__btn--danger:hover:not(:disabled), .cfx-hist__btn--danger.is-confirm { color: var(--cfx-danger); border-color: color-mix(in srgb, var(--cfx-danger) 50%, transparent); background: color-mix(in srgb, var(--cfx-danger) 12%, transparent); }
+.cfx-hist__btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ---- Một cuộc trò chuyện ---- */
+.cfx-conv {
+  position: relative; display: flex; align-items: stretch; gap: 4px; border-radius: 12px;
+  background: var(--cfx-surface-2); border: 1px solid var(--cfx-line); transition: border-color .2s, background-color .2s;
+}
+.cfx-conv:hover { border-color: var(--cfx-accent-line); }
+.cfx-conv.is-active { border-color: var(--cfx-accent); background: var(--cfx-accent-soft); }
+.cfx-conv__main {
+  flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; padding: 11px 6px 11px 14px;
+  text-align: left; cursor: pointer; background: transparent; border: 0; color: inherit; font: inherit;
+}
+.cfx-conv__title { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 0.88rem; font-weight: 600; color: var(--text-primary); }
+.cfx-conv__title > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cfx-conv__pinmark { flex: 0 0 auto; display: inline-flex; color: var(--cfx-accent); font-style: normal; }
+.cfx-conv__pinmark svg { width: 13px; height: 13px; }
+.cfx-conv__meta { font-size: 0.7rem; color: var(--text-muted); }
+.cfx-conv__snip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.76rem; color: var(--text-secondary); opacity: .85; }
+.cfx-conv__acts { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; padding-right: 6px; }
+.cfx-conv__ic {
+  width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; cursor: pointer;
+  color: var(--text-muted); background: transparent; border: 1px solid transparent; transition: all .2s;
+}
+.cfx-conv__ic:hover { color: var(--cfx-accent); background: var(--cfx-accent-soft); }
+.cfx-conv__ic.is-on { color: var(--cfx-accent); }
+.cfx-conv__ic.is-ok { color: var(--cfx-accent); border-color: var(--cfx-accent-line); }
+.cfx-conv__ic.is-danger:hover { color: var(--cfx-danger); background: color-mix(in srgb, var(--cfx-danger) 14%, transparent); }
+@media (hover: hover) {
+  .cfx-conv__acts { opacity: 0; transition: opacity .15s; }
+  .cfx-conv:hover .cfx-conv__acts, .cfx-conv:focus-within .cfx-conv__acts, .cfx-conv.is-active .cfx-conv__acts { opacity: 1; }
+}
+.cfx-conv__editrow, .cfx-conv__confirm { flex: 1; display: flex; align-items: center; gap: 6px; padding: 8px 8px 8px 12px; min-width: 0; }
+.cfx-conv__edit {
+  flex: 1; min-width: 0; height: 36px; padding: 0 10px; border-radius: 9px; font: inherit; font-size: 0.86rem; color: var(--text-primary);
+  background: var(--bg-deep, #0a0a0f); border: 1px solid var(--cfx-accent-line); outline: none;
+}
+.cfx-conv__edit:focus { box-shadow: 0 0 0 3px var(--cfx-accent-soft); }
+.cfx-conv__confirm { flex-wrap: wrap; font-size: 0.82rem; color: var(--text-primary); }
+.cfx-conv__confirm span { flex: 1 1 140px; font-weight: 500; }
+.cfx-conv__yes, .cfx-conv__no { height: 34px; padding: 0 14px; border-radius: 9px; cursor: pointer; font: inherit; font-size: 0.78rem; font-weight: 600; border: 1px solid var(--cfx-line); }
+.cfx-conv__yes { color: #fff; background: var(--cfx-danger); border-color: var(--cfx-danger); }
+.cfx-conv__no { color: var(--text-secondary); background: transparent; }
+
+@media (pointer: coarse) {
+  .cfx-conv__ic, .cfx-convbar__btn { width: 40px; height: 40px; }
+  .cfx-conv__ic { width: 38px; height: 38px; }
+  .cfx-convbar__hist, .cfx-convbar__new, .cfx-hist__btn, .cfx-hist__x { min-height: 44px; }
+  .cfx-convbar__new { width: 44px; }
+  .cfx-conv__yes, .cfx-conv__no { height: 42px; }
+  .cfx-conv__acts { padding-right: 2px; gap: 0; }
+}
+@media (max-width: 520px) {
+  :root body .cfx-chat { height: min(640px, 78dvh); }
+  .cfx-convbar__hist span { display: none; }   /* chỉ còn icon + số lượng cho gọn */
+  .cfx-hist { padding: 12px; }
+  .cfx-hist__btn--danger span { display: none; }
+  .cfx-hist__btn--danger.is-confirm span { display: inline; }
+  /* Thẻ cuộc trò chuyện: tiêu đề full chiều rộng, nút thao tác nằm góc dưới phải */
+  .cfx-conv__main { padding: 10px 14px 30px; }
+  .cfx-conv__snip { display: none; }
+  .cfx-conv__acts { position: absolute; right: 4px; bottom: 4px; padding: 0; opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .cfx-hist { animation: none; } }
+
+/* ============================================================
+   12. FIX — Popover bộ lọc bảng giao dịch trên mobile
+   (cột "Amount" từng căn phải nên tràn ra ngoài khi pill nằm bên trái)
+   ============================================================ */
+@media (max-width: 768px) {
+  :root body .hub-cf-ledger { overflow: visible; }
+  :root body .hub-cf-table thead { position: relative !important; z-index: 40; top: auto !important; }
+  :root body .hub-cf-table thead tr { position: relative; }
+  :root body .hub-cf-table th, :root body .hub-cf-table th.hub-cf-col-filterable { position: static !important; }
+  :root body .hub-cf-filter-popover {
+    position: absolute !important;
+    top: 100% !important;
+    bottom: auto !important;
+    left: 0 !important;
+    right: 0 !important;
+    height: auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    max-height: min(70dvh, 420px);
+    overflow-y: auto;
+    margin-top: 6px;
+    z-index: 60;
+  }
+  :root body .hub-cf-filter-popover::before { display: none; }
+}
+
+/* Toast chỉ để đọc, không được nuốt thao tác chạm của nút nằm bên dưới */
+.hub-cf-toast, #hub-cf-toast, .hub-toast { pointer-events: none; }

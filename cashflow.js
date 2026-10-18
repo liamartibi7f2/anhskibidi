@@ -959,6 +959,7 @@ const cashflowModule = (function () {
         // Don't restore isLoading from disk — check in-flight request instead
       }
     } catch (_) {}
+    _cvInit();
   }
 
   function _saveAIState() {
@@ -971,6 +972,7 @@ const cashflowModule = (function () {
         tab: _aiState.tab
       }));
     } catch (_) {}
+    _cvSyncActive();
   }
 
   // ============================================================
@@ -10995,6 +10997,485 @@ ${_aiShellHTML()}
     if (wrap) wrap.innerHTML = _buildAIChipsHTML();
   }
 
+  // ============================================================
+  //   AI CONVERSATIONS — Lịch sử & quản lý cuộc hội thoại
+  //   • Lưu nhiều cuộc trò chuyện (localStorage: hub_cf_ai_convs_v1)
+  //   • Chuyển đổi, đổi tên, ghim, xóa, xuất .md, tìm kiếm
+  //   • _aiState.conversationHistory luôn = tin nhắn của cuộc đang mở,
+  //     nên toàn bộ luồng gửi / tạo lại / render cũ vẫn chạy nguyên.
+  // ============================================================
+
+  var CV_KEY = 'hub_cf_ai_convs_v1';
+  var CV_MAX_CONVS = 40;
+  var CV_MAX_MSGS = 100;
+  var CV_ICON = {
+    history: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/></svg>',
+    edit:    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+    pin:     '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 3h6l-1 6 4 4v2H6v-2l4-4z"/></svg>',
+    download:'<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>',
+    trash:   '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>',
+    check:   '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>',
+    close:   '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>',
+    search:  '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>',
+    chat:    '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.5 7.2L3 21l1.8-6A8 8 0 1 1 21 12z"/></svg>'
+  };
+
+  var _cv = {
+    loaded: false, activeId: null, items: [],
+    open: false, q: '', editId: null, barEdit: false,
+    confirmId: null, confirmAll: false, sig: '', _confirmTimer: null
+  };
+
+  var CV_I18N = {
+    vi: {
+      hist: 'Lịch sử', histTitle: 'Lịch sử trò chuyện', search: 'Tìm theo tiêu đề hoặc nội dung…',
+      emptyAll: 'Chưa có cuộc trò chuyện nào', emptyAllSub: 'Hỏi AI một câu, cuộc trò chuyện sẽ tự được lưu ở đây.',
+      emptyQ: 'Không tìm thấy kết quả', newChat: 'Cuộc trò chuyện mới', untitled: 'Cuộc trò chuyện mới',
+      clearAll: 'Xóa tất cả', clearAllSure: 'Bấm lần nữa để xóa hết',
+      pinned: 'Đã ghim', today: 'Hôm nay', yesterday: 'Hôm qua', week: '7 ngày qua', older: 'Cũ hơn', results: 'Kết quả',
+      msgs: function (n) { return n + ' tin'; },
+      rename: 'Đổi tên', pin: 'Ghim', unpin: 'Bỏ ghim', exportMd: 'Xuất file .md', del: 'Xóa',
+      delSure: 'Xóa cuộc trò chuyện này?', delYes: 'Xóa', cancel: 'Hủy', save: 'Lưu', close: 'Đóng',
+      renameHint: 'Đặt tên cuộc trò chuyện', you: 'Bạn',
+      tNew: 'Đã bắt đầu cuộc trò chuyện mới', tRenamed: 'Đã đổi tên', tDeleted: 'Đã xóa cuộc trò chuyện',
+      tAllDeleted: 'Đã xóa toàn bộ lịch sử', tExported: 'Đã xuất file', tPinned: 'Đã ghim', tUnpinned: 'Đã bỏ ghim'
+    },
+    en: {
+      hist: 'History', histTitle: 'Conversation history', search: 'Search by title or content…',
+      emptyAll: 'No conversations yet', emptyAllSub: 'Ask the AI something and the chat will be saved here automatically.',
+      emptyQ: 'No results found', newChat: 'New conversation', untitled: 'New conversation',
+      clearAll: 'Delete all', clearAllSure: 'Tap again to delete everything',
+      pinned: 'Pinned', today: 'Today', yesterday: 'Yesterday', week: 'Previous 7 days', older: 'Older', results: 'Results',
+      msgs: function (n) { return n + (n === 1 ? ' message' : ' messages'); },
+      rename: 'Rename', pin: 'Pin', unpin: 'Unpin', exportMd: 'Export .md', del: 'Delete',
+      delSure: 'Delete this conversation?', delYes: 'Delete', cancel: 'Cancel', save: 'Save', close: 'Close',
+      renameHint: 'Name this conversation', you: 'You',
+      tNew: 'Started a new conversation', tRenamed: 'Renamed', tDeleted: 'Conversation deleted',
+      tAllDeleted: 'All history deleted', tExported: 'File exported', tPinned: 'Pinned', tUnpinned: 'Unpinned'
+    }
+  };
+  function _cvT(k, n) {
+    var d = CV_I18N[_getCFLang() === 'en' ? 'en' : 'vi'];
+    var v = d[k];
+    return typeof v === 'function' ? v(n) : (v == null ? k : v);
+  }
+
+  function _cvNorm(s) {
+    return String(s == null ? '' : s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd');
+  }
+  function _cvNewId() { return 'cv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+  function _cvCopyMsg(m) { return { role: m.role === 'user' ? 'user' : 'assistant', content: String(m.content == null ? '' : m.content), timestamp: m.timestamp || Date.now() }; }
+  function _cvGet(id) {
+    if (!id) return null;
+    for (var i = 0; i < _cv.items.length; i++) if (_cv.items[i].id === id) return _cv.items[i];
+    return null;
+  }
+  function _cvAutoTitle(msgs) {
+    for (var i = 0; i < msgs.length; i++) {
+      if (msgs[i].role === 'user') {
+        var t = String(msgs[i].content).replace(/\s+/g, ' ').trim();
+        if (t) return t.length > 48 ? t.slice(0, 47).trim() + '…' : t;
+      }
+    }
+    return _cvT('untitled');
+  }
+
+  function _cvLoad() {
+    _cv.items = []; _cv.activeId = null;
+    try {
+      var s = JSON.parse(localStorage.getItem(CV_KEY) || 'null');
+      if (s && Array.isArray(s.items)) {
+        _cv.items = s.items.filter(function (c) { return c && typeof c.id === 'string' && Array.isArray(c.messages); }).map(function (c) {
+          return {
+            id: c.id, title: String(c.title || ''), customTitle: !!c.customTitle, pinned: !!c.pinned,
+            createdAt: c.createdAt || Date.now(), updatedAt: c.updatedAt || c.createdAt || Date.now(),
+            messages: c.messages.map(_cvCopyMsg)
+          };
+        });
+        _cv.activeId = s.activeId || null;
+      }
+    } catch (_) {}
+    _cv.loaded = true;
+  }
+
+  function _cvEvict() {
+    var c = _cv.items.filter(function (x) { return !x.pinned && x.id !== _cv.activeId; })
+      .sort(function (a, b) { return a.updatedAt - b.updatedAt; })[0];
+    if (!c) return false;
+    _cv.items = _cv.items.filter(function (x) { return x !== c; });
+    return true;
+  }
+
+  function _cvPersist() {
+    for (var i = 0; i < 25; i++) {
+      try {
+        localStorage.setItem(CV_KEY, JSON.stringify({ v: 1, activeId: _cv.activeId, items: _cv.items }));
+        return true;
+      } catch (e) { if (!_cvEvict()) return false; }   // đầy bộ nhớ → bỏ bớt cuộc cũ nhất chưa ghim
+    }
+    return false;
+  }
+
+  function _cvSig() {
+    var h = _aiState.conversationHistory || [];
+    var last = h.length ? h[h.length - 1] : null;
+    return (_cv.activeId || '-') + '|' + h.length + '|' + (last ? (last.timestamp || 0) + ':' + String(last.content).length : 0);
+  }
+
+  function _cvInit() {
+    _cvLoad();
+    var active = _cvGet(_cv.activeId);
+    if (active) {
+      _aiState.conversationHistory = active.messages.map(_cvCopyMsg);
+    } else {
+      _cv.activeId = null;
+      if ((_aiState.conversationHistory || []).length) _cvSyncActive(true);   // chuyển lịch sử cũ thành 1 cuộc trò chuyện
+    }
+    _cv.sig = _cvSig();
+  }
+
+  function _cvSyncActive(force) {
+    if (!_cv.loaded) return;
+    var h = _aiState.conversationHistory || [];
+    if (!force && _cvSig() === _cv.sig) return;
+    var conv = _cvGet(_cv.activeId);
+    if (!conv) {
+      if (!h.length) { _cv.sig = _cvSig(); return; }
+      conv = { id: _cvNewId(), title: '', customTitle: false, pinned: false, createdAt: Date.now(), updatedAt: Date.now(), messages: [] };
+      _cv.items.unshift(conv);
+      _cv.activeId = conv.id;
+    }
+    conv.messages = h.slice(-CV_MAX_MSGS).map(_cvCopyMsg);
+    if (!conv.customTitle && !conv.title) conv.title = _cvAutoTitle(conv.messages);
+    var last = h[h.length - 1];
+    if (last) conv.updatedAt = last.timestamp || Date.now();
+    while (_cv.items.length > CV_MAX_CONVS) { if (!_cvEvict()) break; }
+    _cvPersist();
+    _cv.sig = _cvSig();
+    _cvRenderAll();
+  }
+
+  // ── Thao tác ──
+  function _cvStopLoading() {
+    if (_aiState.isLoading) { _aiState.userAborted = true; _abortAIRequest(); }
+  }
+
+  function _cvNew() {
+    _cvStopLoading();
+    _cv.activeId = null; _cv.open = false; _cv.barEdit = false; _cv.editId = null;
+    _aiState.conversationHistory = [];
+    _aiState.currentResponse = '';
+    _aiState.lastError = null;
+    _saveAIState();
+    _cvPersist();
+    _cv.sig = _cvSig();
+    _renderChatHistory();
+    _showToast(_cvT('tNew'));
+  }
+
+  function _cvSwitch(id) {
+    var conv = _cvGet(id);
+    if (!conv) return;
+    _cvStopLoading();
+    _cv.activeId = id; _cv.open = false; _cv.editId = null; _cv.barEdit = false;
+    _aiState.conversationHistory = conv.messages.map(_cvCopyMsg);
+    _aiState.currentResponse = '';
+    _aiState.lastError = null;
+    _cv.sig = '';
+    _saveAIState();
+    _cvPersist();
+    _renderChatHistory();
+    _switchAITab('chat');
+  }
+
+  function _cvRename(id, raw) {
+    var conv = _cvGet(id);
+    if (!conv) return;
+    var v = String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    if (v) { conv.title = v; conv.customTitle = true; }
+    else { conv.customTitle = false; conv.title = _cvAutoTitle(conv.messages); }
+    _cvPersist();
+    _showToast(_cvT('tRenamed'));
+  }
+
+  function _cvTogglePin(id) {
+    var conv = _cvGet(id);
+    if (!conv) return;
+    conv.pinned = !conv.pinned;
+    _cvPersist();
+    _showToast(_cvT(conv.pinned ? 'tPinned' : 'tUnpinned'));
+  }
+
+  function _cvDelete(id) {
+    var conv = _cvGet(id);
+    if (!conv) return;
+    var wasActive = id === _cv.activeId;
+    _cv.items = _cv.items.filter(function (c) { return c.id !== id; });
+    _cv.confirmId = null;
+    if (wasActive) {
+      _cvStopLoading();
+      _cv.activeId = null;
+      _aiState.conversationHistory = [];
+      _aiState.currentResponse = '';
+      _saveAIState();
+    }
+    _cvPersist();
+    _cv.sig = _cvSig();
+    if (wasActive) _renderChatHistory();
+    _showToast(_cvT('tDeleted'));
+  }
+
+  function _cvDeleteAll() {
+    _cvStopLoading();
+    _cv.items = []; _cv.activeId = null; _cv.confirmAll = false; _cv.confirmId = null; _cv.editId = null; _cv.q = '';
+    _aiState.conversationHistory = [];
+    _aiState.currentResponse = '';
+    _saveAIState();
+    _cvPersist();
+    _cv.sig = _cvSig();
+    _renderChatHistory();
+    _showToast(_cvT('tAllDeleted'));
+  }
+
+  function _cvExport(id) {
+    var conv = _cvGet(id);
+    if (!conv) return;
+    var fmt = function (ts) { try { return new Date(ts).toLocaleString(_getCFLang() === 'en' ? 'en-US' : 'vi-VN'); } catch (_) { return ''; } };
+    var lines = ['# ' + (conv.title || _cvT('untitled')), '', '_' + fmt(conv.createdAt) + '_', ''];
+    conv.messages.forEach(function (m) {
+      lines.push('**' + (m.role === 'user' ? _cvT('you') : 'Advisor') + '** · ' + fmt(m.timestamp), '', m.content, '', '---', '');
+    });
+    var slug = _cvNorm(conv.title || 'chat').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'chat';
+    try {
+      var blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = 'ai-' + slug + '.md';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+      _showToast(_cvT('tExported'));
+    } catch (_) {}
+  }
+
+  // ── Giao diện ──
+  function _cvWhen(ts) {
+    var d = new Date(ts), n = new Date();
+    var p = function (x) { return (x < 10 ? '0' : '') + x; };
+    if (d.toDateString() === n.toDateString()) return p(d.getHours()) + ':' + p(d.getMinutes());
+    var s = p(d.getDate()) + '/' + p(d.getMonth() + 1);
+    return d.getFullYear() === n.getFullYear() ? s : s + '/' + d.getFullYear();
+  }
+
+  function _cvBarHTML() {
+    return '<div class="cfx-convbar" id="cfx-convbar"></div>';
+  }
+
+  function _cvPanelHTML() {
+    return '<div class="cfx-hist" id="cfx-hist" role="dialog" aria-label="' + _escHtml(_cvT('histTitle')) + '" hidden>' +
+      '<div class="cfx-hist__head">' +
+        '<strong>' + _escHtml(_cvT('histTitle')) + '</strong>' +
+        '<span class="cfx-hist__count" id="cfx-hist-count"></span>' +
+        '<button type="button" class="cfx-hist__x" data-cv="close" aria-label="' + _escHtml(_cvT('close')) + '">' + CV_ICON.close + '</button>' +
+      '</div>' +
+      '<label class="cfx-hist__search">' + CV_ICON.search +
+        '<input type="search" id="cfx-hist-q" autocomplete="off" placeholder="' + _escHtml(_cvT('search')) + '" aria-label="' + _escHtml(_cvT('search')) + '">' +
+      '</label>' +
+      '<div class="cfx-hist__list" id="cfx-hist-list"></div>' +
+      '<div class="cfx-hist__foot">' +
+        '<button type="button" class="cfx-hist__btn cfx-hist__btn--primary" data-cv="new">' + AI_ICON.plus + '<span>' + _escHtml(_cvT('newChat')) + '</span></button>' +
+        '<button type="button" class="cfx-hist__btn cfx-hist__btn--danger" id="cfx-hist-clear" data-cv="clear-all">' + CV_ICON.trash + '<span>' + _escHtml(_cvT('clearAll')) + '</span></button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function _cvRenderBar() {
+    var bar = _qs('#cfx-convbar');
+    if (!bar) return;
+    var conv = _cvGet(_cv.activeId);
+    var count = _cv.items.length;
+    var title = conv ? (conv.title || _cvT('untitled')) : _cvT('untitled');
+    var html = '<button type="button" class="cfx-convbar__hist" data-cv="toggle" aria-expanded="' + (_cv.open ? 'true' : 'false') + '" title="' + _escHtml(_cvT('histTitle')) + '">' +
+      CV_ICON.history + '<span>' + _escHtml(_cvT('hist')) + '</span>' + (count ? '<b>' + count + '</b>' : '') + '</button>';
+    if (_cv.barEdit && conv) {
+      html += '<div class="cfx-convbar__title is-editing">' +
+        '<input type="text" class="cfx-convbar__input" id="cfx-bar-input" maxlength="60" value="' + _escHtml(conv.title) + '" aria-label="' + _escHtml(_cvT('renameHint')) + '">' +
+        '<button type="button" class="cfx-convbar__btn is-ok" data-cv="bar-save" aria-label="' + _escHtml(_cvT('save')) + '">' + CV_ICON.check + '</button>' +
+        '<button type="button" class="cfx-convbar__btn" data-cv="bar-cancel" aria-label="' + _escHtml(_cvT('cancel')) + '">' + CV_ICON.close + '</button>' +
+      '</div>';
+    } else {
+      html += '<div class="cfx-convbar__title"><span class="cfx-convbar__name' + (conv ? '' : ' is-placeholder') + '">' + _escHtml(title) + '</span>' +
+        (conv ? '<button type="button" class="cfx-convbar__btn" data-cv="bar-rename" title="' + _escHtml(_cvT('rename')) + '" aria-label="' + _escHtml(_cvT('rename')) + '">' + CV_ICON.edit + '</button>' : '') +
+      '</div>';
+    }
+    html += '<button type="button" class="cfx-convbar__btn cfx-convbar__new" data-cv="new" title="' + _escHtml(_cvT('newChat')) + '" aria-label="' + _escHtml(_cvT('newChat')) + '">' + AI_ICON.plus + '</button>';
+    bar.innerHTML = html;
+    if (_cv.barEdit) {
+      var inp = _qs('#cfx-bar-input');
+      if (inp) { inp.focus(); inp.select(); }
+    }
+  }
+
+  function _cvItemHTML(c) {
+    var active = c.id === _cv.activeId;
+    var last = c.messages.length ? c.messages[c.messages.length - 1] : null;
+    var snip = last ? String(last.content).replace(/[#*_`>\-]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 90) : '';
+    var meta = _cvWhen(c.updatedAt) + ' · ' + _cvT('msgs', c.messages.length);
+    var html = '<div class="cfx-conv' + (active ? ' is-active' : '') + (c.pinned ? ' is-pinned' : '') + '" data-id="' + c.id + '">';
+
+    if (_cv.confirmId === c.id) {
+      return html + '<div class="cfx-conv__confirm"><span>' + _escHtml(_cvT('delSure')) + '</span>' +
+        '<button type="button" class="cfx-conv__yes" data-cv="delete-yes">' + _escHtml(_cvT('delYes')) + '</button>' +
+        '<button type="button" class="cfx-conv__no" data-cv="delete-no">' + _escHtml(_cvT('cancel')) + '</button></div></div>';
+    }
+    if (_cv.editId === c.id) {
+      return html + '<div class="cfx-conv__editrow">' +
+        '<input type="text" class="cfx-conv__edit" maxlength="60" value="' + _escHtml(c.title) + '" aria-label="' + _escHtml(_cvT('renameHint')) + '">' +
+        '<button type="button" class="cfx-conv__ic is-ok" data-cv="edit-save" aria-label="' + _escHtml(_cvT('save')) + '">' + CV_ICON.check + '</button>' +
+        '<button type="button" class="cfx-conv__ic" data-cv="edit-cancel" aria-label="' + _escHtml(_cvT('cancel')) + '">' + CV_ICON.close + '</button></div></div>';
+    }
+    html += '<button type="button" class="cfx-conv__main" data-cv="open">' +
+        '<span class="cfx-conv__title">' + (c.pinned ? '<i class="cfx-conv__pinmark" aria-hidden="true">' + CV_ICON.pin + '</i>' : '') + '<span>' + _escHtml(c.title || _cvT('untitled')) + '</span></span>' +
+        '<span class="cfx-conv__meta">' + _escHtml(meta) + '</span>' +
+        (snip ? '<span class="cfx-conv__snip">' + _escHtml(snip) + '</span>' : '') +
+      '</button>' +
+      '<div class="cfx-conv__acts">' +
+        '<button type="button" class="cfx-conv__ic' + (c.pinned ? ' is-on' : '') + '" data-cv="pin" title="' + _escHtml(_cvT(c.pinned ? 'unpin' : 'pin')) + '" aria-label="' + _escHtml(_cvT(c.pinned ? 'unpin' : 'pin')) + '">' + CV_ICON.pin + '</button>' +
+        '<button type="button" class="cfx-conv__ic" data-cv="rename" title="' + _escHtml(_cvT('rename')) + '" aria-label="' + _escHtml(_cvT('rename')) + '">' + CV_ICON.edit + '</button>' +
+        '<button type="button" class="cfx-conv__ic" data-cv="export" title="' + _escHtml(_cvT('exportMd')) + '" aria-label="' + _escHtml(_cvT('exportMd')) + '">' + CV_ICON.download + '</button>' +
+        '<button type="button" class="cfx-conv__ic is-danger" data-cv="delete" title="' + _escHtml(_cvT('del')) + '" aria-label="' + _escHtml(_cvT('del')) + '">' + CV_ICON.trash + '</button>' +
+      '</div></div>';
+    return html;
+  }
+
+  function _cvRenderList() {
+    var list = _qs('#cfx-hist-list');
+    if (!list) return;
+    var q = _cvNorm(_cv.q.trim());
+    var items = _cv.items.slice().sort(function (a, b) { return b.updatedAt - a.updatedAt; });
+    if (q) {
+      items = items.filter(function (c) {
+        if (_cvNorm(c.title).indexOf(q) !== -1) return true;
+        return c.messages.some(function (m) { return _cvNorm(m.content).indexOf(q) !== -1; });
+      });
+    }
+    var html = '';
+    if (!items.length) {
+      html = '<div class="cfx-hist__empty">' + CV_ICON.chat + '<strong>' + _escHtml(_cvT(q ? 'emptyQ' : 'emptyAll')) + '</strong>' +
+        (q ? '' : '<span>' + _escHtml(_cvT('emptyAllSub')) + '</span>') + '</div>';
+    } else if (q) {
+      html = '<div class="cfx-hist__group"><div class="cfx-hist__label">' + _escHtml(_cvT('results')) + ' · ' + items.length + '</div>' + items.map(_cvItemHTML).join('') + '</div>';
+    } else {
+      var start = new Date(); start.setHours(0, 0, 0, 0);
+      var t0 = start.getTime(), DAY = 86400000;
+      var groups = [
+        ['pinned', items.filter(function (c) { return c.pinned; })],
+        ['today', items.filter(function (c) { return !c.pinned && c.updatedAt >= t0; })],
+        ['yesterday', items.filter(function (c) { return !c.pinned && c.updatedAt < t0 && c.updatedAt >= t0 - DAY; })],
+        ['week', items.filter(function (c) { return !c.pinned && c.updatedAt < t0 - DAY && c.updatedAt >= t0 - 7 * DAY; })],
+        ['older', items.filter(function (c) { return !c.pinned && c.updatedAt < t0 - 7 * DAY; })]
+      ];
+      groups.forEach(function (g) {
+        if (!g[1].length) return;
+        html += '<div class="cfx-hist__group"><div class="cfx-hist__label">' + _escHtml(_cvT(g[0])) + '</div>' + g[1].map(_cvItemHTML).join('') + '</div>';
+      });
+    }
+    list.innerHTML = html;
+
+    var cnt = _qs('#cfx-hist-count');
+    if (cnt) cnt.textContent = _cv.items.length ? String(_cv.items.length) : '';
+    var clr = _qs('#cfx-hist-clear');
+    if (clr) {
+      clr.disabled = !_cv.items.length;
+      clr.classList.toggle('is-confirm', _cv.confirmAll);
+      var sp = clr.querySelector('span');
+      if (sp) sp.textContent = _cvT(_cv.confirmAll ? 'clearAllSure' : 'clearAll');
+    }
+    if (_cv.editId) {
+      var ed = list.querySelector('.cfx-conv__edit');
+      if (ed) { ed.focus(); ed.select(); }
+    }
+  }
+
+  function _cvRenderPanel() {
+    var p = _qs('#cfx-hist');
+    if (!p) return;
+    p.hidden = !_cv.open;
+    if (_cv.open) _cvRenderList();
+  }
+
+  function _cvRenderAll() { _cvRenderBar(); _cvRenderPanel(); }
+
+  function _cvClearConfirm() {
+    _cv.confirmId = null; _cv.confirmAll = false;
+    if (_cv._confirmTimer) { clearTimeout(_cv._confirmTimer); _cv._confirmTimer = null; }
+  }
+  function _cvArmConfirmTimeout() {
+    if (_cv._confirmTimer) clearTimeout(_cv._confirmTimer);
+    _cv._confirmTimer = setTimeout(function () { _cv.confirmId = null; _cv.confirmAll = false; _cvRenderList(); }, 4500);
+  }
+
+  function _cvBindEvents(root) {
+    root.addEventListener('click', function (e) {
+      var el = e.target.closest('[data-cv]');
+      if (!el || !root.contains(el)) return;
+      var act = el.getAttribute('data-cv');
+      var row = el.closest('.cfx-conv');
+      var id = row ? row.getAttribute('data-id') : null;
+
+      if (act === 'toggle') {
+        _cv.open = !_cv.open; _cv.q = ''; _cv.editId = null; _cvClearConfirm();
+        _cvRenderBar(); _cvRenderPanel();
+        var q = _qs('#cfx-hist-q'); if (q) q.value = '';
+        if (_cv.open && window.matchMedia && matchMedia('(hover: hover)').matches && q) q.focus();
+      }
+      else if (act === 'close') { _cv.open = false; _cvClearConfirm(); _cvRenderAll(); }
+      else if (act === 'new') { _cvNew(); }
+      else if (act === 'open') { _cvSwitch(id); }
+      else if (act === 'pin') { _cvTogglePin(id); _cvRenderList(); }
+      else if (act === 'rename') { _cvClearConfirm(); _cv.editId = id; _cvRenderList(); }
+      else if (act === 'edit-save') {
+        var inp = row && row.querySelector('.cfx-conv__edit');
+        _cvRename(id, inp ? inp.value : ''); _cv.editId = null; _cvRenderAll();
+      }
+      else if (act === 'edit-cancel') { _cv.editId = null; _cvRenderList(); }
+      else if (act === 'export') { _cvExport(id); }
+      else if (act === 'delete') { _cv.editId = null; _cv.confirmAll = false; _cv.confirmId = id; _cvRenderList(); _cvArmConfirmTimeout(); }
+      else if (act === 'delete-no') { _cvClearConfirm(); _cvRenderList(); }
+      else if (act === 'delete-yes') { _cvClearConfirm(); _cvDelete(id); _cvRenderAll(); }
+      else if (act === 'clear-all') {
+        if (!_cv.items.length) return;
+        if (_cv.confirmAll) { _cvClearConfirm(); _cvDeleteAll(); _cvRenderAll(); }
+        else { _cv.confirmId = null; _cv.confirmAll = true; _cvRenderList(); _cvArmConfirmTimeout(); }
+      }
+      else if (act === 'bar-rename') { if (_cvGet(_cv.activeId)) { _cv.barEdit = true; _cvRenderBar(); } }
+      else if (act === 'bar-save') {
+        var bi = _qs('#cfx-bar-input');
+        _cvRename(_cv.activeId, bi ? bi.value : ''); _cv.barEdit = false; _cvRenderAll();
+      }
+      else if (act === 'bar-cancel') { _cv.barEdit = false; _cvRenderBar(); }
+    });
+
+    root.addEventListener('keydown', function (e) {
+      var t = e.target;
+      if (t.classList && t.classList.contains('cfx-conv__edit')) {
+        var row = t.closest('.cfx-conv');
+        if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); _cvRename(row.getAttribute('data-id'), t.value); _cv.editId = null; _cvRenderAll(); }
+        else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); _cv.editId = null; _cvRenderList(); }
+        return;
+      }
+      if (t.id === 'cfx-bar-input') {
+        if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); _cvRename(_cv.activeId, t.value); _cv.barEdit = false; _cvRenderAll(); }
+        else if (e.key === 'Escape') { e.preventDefault(); _cv.barEdit = false; _cvRenderBar(); }
+        return;
+      }
+      if (e.key === 'Escape' && _cv.open) { e.preventDefault(); _cv.open = false; _cvClearConfirm(); _cvRenderAll(); }
+    });
+
+    root.addEventListener('input', function (e) {
+      if (e.target && e.target.id === 'cfx-hist-q') { _cv.q = e.target.value; _cvRenderList(); }
+    });
+  }
+
   function _aiShellHTML() {
     return '' +
     '<section class="cfx-ai" id="cfx-ai" aria-label="' + _escHtml(_t('aiHeaderTitle')) + '">' +
@@ -11034,6 +11515,7 @@ ${_aiShellHTML()}
       '</div>' +
 
       '<div class="cfx-panel cfx-chat" id="cfx-panel-chat" role="tabpanel" aria-labelledby="cfx-tab-chat" hidden>' +
+        _cvBarHTML() +
         '<div class="cfx-chat__scroll" id="hub-cf-ai-output" aria-live="polite"></div>' +
         '<div class="cfx-chat__composer">' +
           '<div class="cfx-chips" id="cfx-chips">' + _buildAIChipsHTML() + '</div>' +
@@ -11042,6 +11524,7 @@ ${_aiShellHTML()}
             '<button type="button" id="cf-ai-ask-btn" class="cfx-send" title="' + _escHtml(_t('aiBtnSend')) + '" aria-label="' + _escHtml(_t('aiBtnSend')) + '">' + AI_ICON.send + '</button>' +
           '</div>' +
         '</div>' +
+        _cvPanelHTML() +
       '</div>' +
     '</section>';
   }
@@ -11175,12 +11658,14 @@ ${_aiShellHTML()}
     out.innerHTML = '';
     if (!_aiState.conversationHistory.length) {
       out.innerHTML = _aiEmptyStateHTML();
+      _cvRenderAll();
       return;
     }
     _aiState.conversationHistory.forEach(function (msg) {
       _appendAIChatBubble(msg.content, msg.role === 'user' ? 'user' : 'assistant', { time: msg.timestamp });
     });
     out.scrollTop = out.scrollHeight;
+    _cvRenderAll();
   }
 
   function _setAIBusy(busy) {
@@ -11406,6 +11891,7 @@ ${_aiShellHTML()}
 
     if (root && !root.dataset.bound) {
       root.dataset.bound = '1';
+      _cvBindEvents(root);
 
       root.addEventListener('click', function (e) {
         var t = e.target;
@@ -11433,16 +11919,7 @@ ${_aiShellHTML()}
           }
         }
 
-        if (t.closest('#cfx-ai-new')) {
-          if (_aiState.isLoading) { _aiState.userAborted = true; _abortAIRequest(); }
-          _aiState.conversationHistory = [];
-          _aiState.currentResponse = '';
-          _aiState.lastError = null;
-          _saveAIState();
-          _renderChatHistory();
-          _showToast('Đã bắt đầu cuộc trò chuyện mới');
-          return;
-        }
+        if (t.closest('#cfx-ai-new')) { _cvNew(); return; }
 
         if (t.closest('#cf-ai-settings-btn')) { _openAIKeyModal(); return; }
 

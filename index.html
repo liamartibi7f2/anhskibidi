@@ -15,13 +15,14 @@
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
   <title>Wallet.OS — Quản Lý Tài Chính Cá Nhân</title>
 
-  <!-- Google Fonts: Inter & JetBrains Mono (+ Barlow / Barlow Condensed cho theme Ember Noir) -->
+  <!-- Google Fonts: Inter & JetBrains Mono -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
 
   <!-- File CSS độc lập đã lọc gọn -->
-  <link rel="stylesheet" href="cashflow-styles.css?v=20261021" />
+  <link rel="stylesheet" href="cashflow-styles.css?v=20261023" />
 
 </head>
 <body>
@@ -335,8 +336,8 @@
   </script>
 
   <!-- 3. Nạp nguyên bản file cashflow.js -->
-  <script src="cashflow.js?v=20261021"></script>
-  <script src="walletos-mobile.js?v=20261021"></script>
+  <script src="cashflow.js?v=20261023"></script>
+  <script src="walletos-mobile.js?v=20261023"></script>
 
   <!-- 4. Khởi chạy giao diện & các nút điều khiển -->
   <script>
@@ -353,20 +354,13 @@
       var liteBtn = document.getElementById('st-lite');
       var langBtn = document.getElementById('st-lang');
 
-      // Danh sách theme hợp lệ + màu thanh trạng thái (meta theme-color) của từng theme
-      var THEME_COLORS = { 'cyberpunk': '#0a0a0f', 'solar-zen': '#f8fafc', 'lofi-twilight': '#1a1b26', 'ember-noir': '#110c0a' };
-      var metaTheme = document.querySelector('meta[name="theme-color"]');
-      function applyTheme(t) {
-        if (!THEME_COLORS[t]) t = 'cyberpunk';          // giá trị lạ / theme đã bị gỡ → về mặc định
-        document.documentElement.setAttribute('data-theme', t);
-        themeSelect.value = t;
-        if (metaTheme) metaTheme.setAttribute('content', THEME_COLORS[t]);
-        return t;
-      }
-      applyTheme(localStorage.getItem('wallet_os_theme') || 'cyberpunk');
+      var savedTheme = localStorage.getItem('wallet_os_theme') || 'cyberpunk';
+      document.documentElement.setAttribute('data-theme', savedTheme);
+      themeSelect.value = savedTheme;
 
       themeSelect.addEventListener('change', function () {
-        var t = applyTheme(this.value);
+        var t = this.value;
+        document.documentElement.setAttribute('data-theme', t);
         localStorage.setItem('wallet_os_theme', t);
         if (mod && typeof mod.updateLanguage === 'function') {
           mod.updateLanguage(window.app.getLanguage());

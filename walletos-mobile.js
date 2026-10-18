@@ -22,7 +22,7 @@
     { k: 'debt',   sel: '.hub-cf-debt-ledger' },
     { k: 'ai',     sel: '#cfx-ai' }
   ];
-  var THEME_COLORS = { 'cyberpunk': '#0a0a0f', 'solar-zen': '#f8fafc', 'lofi-twilight': '#1a1b26' };
+  var THEME_COLORS = { 'cyberpunk': '#0a0a0f', 'solar-zen': '#f8fafc', 'lofi-twilight': '#1a1b26', 'ember-noir': '#110c0a' };
 
   function lang() {
     try { if (window.app && window.app.getLanguage) return window.app.getLanguage() === 'en' ? 'en' : 'vi'; } catch (e) {}
@@ -101,7 +101,7 @@
   }
 
   // Gắn class body.st-sheet-open khi có modal / ngăn kéo / popover đang hiển thị
-  var OVERLAYS = '.hub-cf-overlay, .hub-cf-bs-overlay, .hub-cf-ai-key-modal, .hub-cf-filter-popover';
+  var OVERLAYS = '.hub-cf-overlay, .hub-cf-bs-overlay, .hub-cf-ai-key-modal, .hub-cf-filter-popover, .cfx-hist';
   var sheetTick = false;
   function checkSheets() {
     sheetTick = false;
