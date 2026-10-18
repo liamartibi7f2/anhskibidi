@@ -8335,6 +8335,7 @@ ${_aiShellHTML()}
 
     var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     _cfcPal = _cfcPalette();
+    _cfcSk = _cfcSkin();
     var mono = _cfcMono();
 
     _chart = new Chart(ctx, {
@@ -8384,7 +8385,8 @@ ${_aiShellHTML()}
             itemSort: function (a, b) { return a.datasetIndex - b.datasetIndex; },
             callbacks: {
               title: function (items) {
-                return items.length ? _cfcTitle(items[0].label) : '';
+                var t = items.length ? _cfcTitle(items[0].label) : '';
+                return _cfcSk.caps ? String(t).toUpperCase() : t;
               },
               label: function (c) {
                 var v = Number(c.raw) || 0;
@@ -8423,7 +8425,7 @@ ${_aiShellHTML()}
             beginAtZero: true, grace: '8%',
             grid: {
               drawBorder: false, borderDash: [3, 5],
-              color: function (c) { return c.tick && c.tick.value === 0 ? _cfcRgba(_cfcPal.text, 0.28) : _cfcRgba(_cfcPal.text, 0.07); }
+              color: _cfcGridColor
             },
             border: { display: false, dash: [3, 5] },
             ticks: {
@@ -8433,25 +8435,32 @@ ${_aiShellHTML()}
           }
         }
       },
-      plugins: [_cfcCrosshairPlugin, _cfcMarkersPlugin]
+      plugins: [_cfcCrosshairPlugin, _cfcMarkersPlugin, _cfcPlatePlugin]
     });
 
+    _cfcWatchSkin();
     _cfcBindLegend();
     _updateChart();
   }
 
   // ── Chart v2: state ──────────────────────────────────────────
   var _cfcPal = null;                                   // bảng màu hiện hành (đọc từ theme)
+  // Kiểu vẽ riêng của từng theme (đọc từ token --cfk-chart-*). Không khai báo token = giao diện mặc định.
+  var _CFC_SKIN_DEFAULT = { bar: 'fade', radius: 6, gridDash: [3, 5], gridColor: '', base: 'line', point: 'circle', plate: 'none', caps: false, tick: 10, brass: '', tipR: 12, badgeR: 9 };
+  var _cfcSk = _CFC_SKIN_DEFAULT;
+  var _cfcSig = '';                                     // chữ ký theme lần vẽ gần nhất (để tránh vẽ lại thừa)
+  var _cfcWatchOn = false;
   var _cfcCur = null;                                   // { s, st, curIdx } của lần vẽ gần nhất
   var _cfcHidden = { income: false, expense: false, net: false, avg: false };
   var _cfcKeys = ['income', 'expense', 'net', 'avg'];
 
   /** Chấm trên đường Ròng: ẩn ở kỳ không có giao dịch hoặc khi quá nhiều điểm */
   function _cfcPointRadius(c) {
-    if (!_cfcCur) return 3.5;
+    var base = (_cfcSk && _cfcSk.point === 'diamond') ? 4.8 : 3.5;   // ◆ cần lớn hơn chấm tròn một chút
+    if (!_cfcCur) return base;
     var i = c.dataIndex, s = _cfcCur.s;
     if (_cfcCur.st.n > 20) return 0;
-    return ((s.income[i] || 0) + (s.expense[i] || 0)) > 0 ? 3.5 : 0;
+    return ((s.income[i] || 0) + (s.expense[i] || 0)) > 0 ? base : 0;
   }
 
   function _cfcMono() {
@@ -8473,6 +8482,68 @@ ${_aiShellHTML()}
       surface: v('--bg-elevated', '#161616'),
       accent: v('--primary', v('--accent-primary', '#00f0ff'))
     };
+  }
+
+  function _cfcSkin() {
+    var host = document.querySelector('.hub-cf-container') || document.documentElement;
+    var st = getComputedStyle(host), D = _CFC_SKIN_DEFAULT;
+    function v(n) { return st.getPropertyValue(n).trim(); }
+    function num(n, fb) { var x = parseFloat(v(n)); return isFinite(x) ? x : fb; }
+    var dash = v('--cfk-chart-grid').split(/[\s,]+/).map(parseFloat).filter(function (x) { return isFinite(x) && x >= 0; });
+    return {
+      bar: v('--cfk-chart-bar') === 'metal' ? 'metal' : D.bar,
+      radius: num('--cfk-chart-radius', D.radius),
+      gridDash: dash.length ? dash : D.gridDash,
+      gridColor: v('--cfk-chart-grid-color') || D.gridColor,
+      base: v('--cfk-chart-base') === 'double' ? 'double' : D.base,
+      point: v('--cfk-chart-point') === 'diamond' ? 'diamond' : D.point,
+      plate: v('--cfk-chart-plate') === 'brass' ? 'brass' : D.plate,
+      caps: v('--cfk-chart-caps') === '1',
+      tick: num('--cfk-chart-tick', D.tick),
+      brass: v('--cfk-chart-brass') || D.brass,
+      tipR: num('--cfk-chart-tip-r', D.tipR),
+      badgeR: num('--cfk-chart-badge-r', D.badgeR)
+    };
+  }
+
+  function _cfcSkinSig() {
+    return (document.documentElement.getAttribute('data-theme') || '') + '|' +
+      (document.body && document.body.classList.contains('theme-optimized') ? 'opt' : '');
+  }
+
+  /** Đổi theme / bật Optimize ở bất cứ đâu (kể cả Hub) hoặc font vừa tải xong → vẽ lại biểu đồ */
+  function _cfcWatchSkin() {
+    if (_cfcWatchOn) return;
+    _cfcWatchOn = true;
+    var raf = 0;
+    function refresh(force) {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(function () {
+        if (!_chart || !_chart.canvas) return;
+        if (!force && _cfcSkinSig() === _cfcSig) return;
+        _updateChart();
+      });
+    }
+    try {
+      var mo = new MutationObserver(function () { refresh(false); });
+      mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+      if (document.body) mo.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    } catch (_) {}
+    try {
+      if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', function () { refresh(true); });
+    } catch (_) {}
+  }
+
+  /** Trộn hai màu (t = 0 → c1, t = 1 → c2) */
+  function _cfcMix(c1, c2, t) {
+    var a = _cfcRGB(c1), b = _cfcRGB(c2);
+    return 'rgb(' + Math.round(a[0] + (b[0] - a[0]) * t) + ',' + Math.round(a[1] + (b[1] - a[1]) * t) + ',' + Math.round(a[2] + (b[2] - a[2]) * t) + ')';
+  }
+
+  function _cfcGridColor(c) {
+    var zero = !!(c.tick && c.tick.value === 0);
+    if (zero) return _cfcSk.base === 'double' ? 'rgba(0,0,0,0)' : _cfcRgba(_cfcPal.text, 0.28);   // gạch đôi do plugin plate vẽ
+    return _cfcSk.gridColor || _cfcRgba(_cfcPal.text, 0.07);
   }
 
   var _cfcColorCtx = null;
@@ -8508,6 +8579,12 @@ ${_aiShellHTML()}
       var chart = c.chart, area = chart.chartArea, col = _cfcPal[key];
       if (!area) return _cfcRgba(col, 0.75);
       var g = chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
+      if (_cfcSk.bar === 'metal') {            // kim loại nóng chảy: đỉnh sáng như đèn rọi, chân tối
+        g.addColorStop(0, _cfcMix(col, '#fff0d2', 0.55));
+        g.addColorStop(0.45, _cfcRgba(col, 0.96));
+        g.addColorStop(1, _cfcRgba(_cfcMix(col, '#2a1408', 0.5), 0.6));
+        return g;
+      }
       g.addColorStop(0, _cfcRgba(col, 0.95));
       g.addColorStop(1, _cfcRgba(col, 0.22));
       return g;
@@ -8539,6 +8616,23 @@ ${_aiShellHTML()}
     o.scales.x.ticks.color = P.muted;
     o.scales.y.ticks.color = P.muted;
     o.scales.x.ticks.maxTicksLimit = (_chartFilter === 'day' || _chartFilter === 'month') ? 10 : 24;
+
+    // ── Kiểu vẽ riêng của theme (token --cfk-chart-*) ──
+    var K = _cfcSk, mono = _cfcMono(), brass = K.brass || P.accent, metal = K.bar === 'metal';
+    [0, 1].forEach(function (i) {
+      ds[i].borderRadius = metal ? { topLeft: K.radius, topRight: K.radius, bottomLeft: 0, bottomRight: 0 } : K.radius;
+      ds[i].borderColor = metal ? _cfcMix(i === 0 ? P.income : P.expense, '#fff0d2', 0.75) : 'transparent';
+      ds[i].borderWidth = metal ? { top: 1.5, right: 0, bottom: 0, left: 0 } : 0;   // viền đồng sáng trên đỉnh cột
+    });
+    ds[2].pointStyle = K.point === 'diamond' ? 'rectRot' : 'circle';
+    [o.scales.x.ticks, o.scales.y.ticks].forEach(function (t) { t.font.family = mono; t.font.size = K.tick; });
+    o.scales.y.grid.borderDash = K.gridDash;       // v3
+    o.scales.y.grid.tickBorderDash = K.gridDash;   // v4 (đường lưới)
+    o.scales.y.border.dash = K.gridDash;
+    tip.titleFont.family = mono; tip.bodyFont.family = mono;
+    tip.titleFont.size = K.tick + 1; tip.bodyFont.size = K.tick + 1.5;
+    tip.cornerRadius = K.tipR;
+    tip.borderColor = _cfcRgba(K.plate === 'brass' ? brass : P.accent, K.plate === 'brass' ? 0.6 : 0.35);
   }
 
   // ── Chart v2: plugins (vẽ trực tiếp lên canvas) ──────────────
@@ -8578,7 +8672,9 @@ ${_aiShellHTML()}
       ctx.fillRect(x - w / 2, a.top, w, a.bottom - a.top);
       ctx.fillStyle = _cfcPal.accent;       // mũi tên nhỏ phía trên
       ctx.beginPath();
-      ctx.moveTo(x - 4, a.top - 9); ctx.lineTo(x + 4, a.top - 9); ctx.lineTo(x, a.top - 3); ctx.closePath();
+      if (_cfcSk.point === 'diamond') { ctx.moveTo(x, a.top - 12); ctx.lineTo(x + 5, a.top - 7); ctx.lineTo(x, a.top - 2); ctx.lineTo(x - 5, a.top - 7); }
+      else { ctx.moveTo(x - 4, a.top - 9); ctx.lineTo(x + 4, a.top - 9); ctx.lineTo(x, a.top - 3); }
+      ctx.closePath();
       ctx.fill();
       ctx.restore();
     },
@@ -8594,13 +8690,13 @@ ${_aiShellHTML()}
       var topY = incBar ? Math.min(bar.y, incBar.y) : bar.y;
       var cx = incBar ? (bar.x + incBar.x) / 2 : bar.x;
       var ctx = chart.ctx, a = chart.chartArea;
-      var text = _formatCompactVND(st.peakVal);
+      var text = (_cfcSk.point === 'diamond' ? '◆ ' : '') + _formatCompactVND(st.peakVal);
       ctx.save();
-      ctx.font = '600 10px ' + _cfcMono();
+      ctx.font = '600 ' + Math.max(10, _cfcSk.tick - 1) + 'px ' + _cfcMono();
       var tw = ctx.measureText(text).width, padX = 7, h = 18, w = tw + padX * 2;
       var x = Math.min(Math.max(cx - w / 2, a.left), a.right - w);
       var y = Math.max(topY - h - 6, 2);
-      var r = 9;
+      var r = Math.min(_cfcSk.badgeR, h / 2);
       ctx.beginPath();
       ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.arcTo(x + w, y, x + w, y + r, r);
       ctx.lineTo(x + w, y + h - r); ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
@@ -8614,6 +8710,38 @@ ${_aiShellHTML()}
       ctx.fillStyle = _cfcPal.expense;
       ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
       ctx.fillText(text, x + w / 2, y + h / 2 + 0.5);
+      ctx.restore();
+    }
+  };
+
+  /** "Bảng đồng thau" (Ember Noir): sống trục trái + vạch chia như đồng hồ đo + gạch đôi ở đường 0 */
+  var _cfcPlatePlugin = {
+    id: 'cfcPlate',
+    afterDatasetsDraw: function (chart) {
+      if (_cfcSk.plate !== 'brass' || !_cfcPal) return;
+      var a = chart.chartArea, y = chart.scales && chart.scales.y;
+      if (!a || !y) return;
+      var brass = _cfcSk.brass || _cfcPal.accent, ctx = chart.ctx, px = [];
+      (y.ticks || []).forEach(function (t) { px.push(y.getPixelForValue(t.value)); });
+      ctx.save();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = _cfcRgba(brass, 0.55);
+      ctx.beginPath();
+      ctx.moveTo(a.left + 0.5, a.top); ctx.lineTo(a.left + 0.5, a.bottom);                  // sống
+      px.forEach(function (py, i) {
+        var yy = Math.round(py) + 0.5;
+        ctx.moveTo(a.left, yy); ctx.lineTo(a.left + 8, yy);                                  // vạch chính
+        if (i > 0) { var my = Math.round((py + px[i - 1]) / 2) + 0.5; ctx.moveTo(a.left, my); ctx.lineTo(a.left + 4, my); }   // vạch phụ
+      });
+      ctx.stroke();
+      if (_cfcSk.base === 'double' && y.min <= 0 && y.max >= 0) {                           // gạch đôi tại 0
+        var y0 = Math.round(y.getPixelForValue(0));
+        ctx.strokeStyle = _cfcRgba(brass, 0.8);
+        ctx.beginPath();
+        ctx.moveTo(a.left, y0 - 1.5); ctx.lineTo(a.right, y0 - 1.5);
+        ctx.moveTo(a.left, y0 + 2.5); ctx.lineTo(a.right, y0 + 2.5);
+        ctx.stroke();
+      }
       ctx.restore();
     }
   };
@@ -8789,6 +8917,8 @@ ${_aiShellHTML()}
     if (!_chart || !_chart.canvas) return;
 
     _cfcPal = _cfcPalette();
+    _cfcSk = _cfcSkin();
+    _cfcSig = _cfcSkinSig();
     var s = _cfcBuildSeries();
     var st = _cfcStats(s);
     var hasData = st.n > 0 && (st.totalIn + st.totalOut) > 0;

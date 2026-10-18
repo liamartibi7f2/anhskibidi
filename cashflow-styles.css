@@ -3788,6 +3788,10 @@ body.theme-optimized {
   --cfk-heat-0: #00ff41; --cfk-heat-1: #ffb000; --cfk-heat-2: #ff7a00; --cfk-heat-3: #ff4d4d;
   --cfk-val-a: none; --cfk-val-b: none;
   --cfk-scheme: dark;
+  /* canvas chart: always the plain default look (overrides a theme's chart signature) */
+  --cfk-chart-bar: initial; --cfk-chart-radius: initial; --cfk-chart-grid: initial; --cfk-chart-grid-color: initial;
+  --cfk-chart-base: initial; --cfk-chart-point: initial; --cfk-chart-plate: initial; --cfk-chart-caps: initial;
+  --cfk-chart-tick: initial; --cfk-chart-brass: initial; --cfk-chart-tip-r: initial; --cfk-chart-badge-r: initial;
 }
 
 /* 5) LITE MODE */
@@ -4442,3 +4446,358 @@ body.theme-optimized .st-bottomnav { background: #000; border-top-color: rgba(0,
   .cfg-head .cfg-titles { width: 100%; }
   .cfg-head .cfg-btn { min-width: 220px; height: 44px; justify-content: center; }
 }
+
+/* ============================================================
+   EMBER NOIR — signature theme for Hub.OS / Wallet.OS
+   "Brass instrument plate under a banker's lamp."
+
+   What makes it its own (nothing here is shared with the other 4 themes):
+     · FRAME     double brass frame (outer hairline + inner rule) with four
+                 riveted corners on every plate: cards, modals, flashcards
+     · TYPE      Barlow Condensed for figures / labels (engraved-plate look),
+                 Barlow for text — the others use JetBrains Mono, a serif,
+                 rounded sans and Courier
+     · SHAPE     "keycap" controls: 8px rounded-rect with a lit top edge and a
+                 dark bottom edge (the others are pills, sharp or soft-round)
+     · COLOUR    amber #ff9f43 on warm coal, ember-red secondary, brass rules
+                 (no cyan, purple or green anywhere)
+     · DETAILS   ◆ label marker, double rule under table heads, dotted leader
+                 lines between ledger rows, molten-metal gradient numerals,
+                 hatched "engraved" backdrop with a lamp glow at the top
+
+   Also its own (canvas chart, read by cashflow.js -> _cfcSkin()):
+     · BARS      molten-metal gradient with a brass top rim, 3px "plate" corners
+     · GRID      dotted brass leaders (same as the ledger rows), double rule on
+                 the zero line (same as the table head), gauge ticks on the left
+     · POINTS    ◆ diamond markers, ◆ peak badge, engraved UPPERCASE tooltip
+     The other themes keep the default chart (tokens below are simply unset).
+
+   Install (4 steps)
+     1. Load Barlow — put this in <head> of index.html AND the Wallet.OS page
+        (a CSS @import is only valid at the very top of a stylesheet):
+          <link rel="preconnect" href="https://fonts.googleapis.com">
+          <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+          <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700&display=swap">
+        (Without it the theme still works: it falls back to Roboto Condensed /
+         Arial Narrow, just less distinctive. Barlow includes Vietnamese.)
+     2. Append this file to styles.css and cashflow-styles.css (or load it after them).
+        (Hub styles.css has no --cfk-* skin, so there only A) and C) matter.)
+     3. Add  <option value="ember-noir">Ember Noir</option>  to the theme picker and to
+        the JS list of valid themes. Optimize + Lite keep working unchanged.
+     4. Use the cashflow.js that carries _cfcSkin() (chart signature). Without it
+        the chart just takes the Ember colours, like before.
+   ============================================================ */
+
+
+/* ════════════════════════════════════════════════════════════
+   A) BASE TOKENS (Hub.OS + Wallet.OS shell)
+   ════════════════════════════════════════════════════════════ */
+[data-theme="ember-noir"] {
+  --bg-deep:         #110c0a;
+  --bg-surface:      #1a1411;
+  --bg-elevated:     #261d18;
+  --glass-bg:        rgba(26, 20, 17, 0.78);
+  --glass-border:    rgba(224, 170, 100, 0.14);
+  --glass-highlight: rgba(224, 170, 100, 0.07);
+
+  --accent-primary:   #ff9f43;      /* amber */
+  --accent-secondary: #ff6a4d;      /* ember red */
+  --accent-glow:      0 0 18px rgba(255, 159, 67, 0.20);
+
+  --text-primary:   #f4eae2;
+  --text-secondary: #c8b4a5;
+  --text-muted:     #9a8576;
+
+  --danger:  #ff7b7b;
+  --success: #8be3a0;
+  --warning: #ffd166;
+
+  --font-body: 'Barlow', 'Roboto', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Barlow Condensed', 'Roboto Condensed', 'Arial Narrow', 'Segoe UI', sans-serif;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  --shadow-sm:   0 2px 8px rgba(0, 0, 0, 0.45);
+  --shadow-md:   0 4px 20px rgba(0, 0, 0, 0.55);
+  --shadow-lg:   0 8px 40px rgba(0, 0, 0, 0.65);
+  --shadow-glow: 0 0 22px rgba(255, 159, 67, 0.14);
+
+  --ember-brass:      #e0aa64;                       /* frame metal */
+  --ember-brass-line: rgba(224, 170, 100, 0.22);
+}
+
+/* Backdrop: engraved diagonal hatch + a lamp glow at the top (instead of the dot grid) */
+[data-theme="ember-noir"] body::before {
+  background-image:
+    radial-gradient(70% 38% at 50% -8%, rgba(255, 159, 67, 0.11), transparent 70%),
+    repeating-linear-gradient(135deg, rgba(224, 170, 100, 0.028) 0 1px, transparent 1px 7px);
+  background-size: auto, auto;
+}
+[data-theme="ember-noir"] ::selection { background: rgba(255, 159, 67, 0.35); color: #fff; }
+[data-theme="ember-noir"] ::-webkit-scrollbar-thumb { background: rgba(224, 170, 100, 0.26); }
+[data-theme="ember-noir"] ::-webkit-scrollbar-thumb:hover { background: rgba(255, 159, 67, 0.5); }
+[data-theme="ember-noir"] *:focus-visible { outline-color: var(--accent-primary); }
+
+/* Shell: brass-framed top bar, engraved logo plate */
+[data-theme="ember-noir"] .standalone-topbar {
+  border-radius: 12px;
+  box-shadow:
+    inset 0 0 0 4px var(--bg-surface),
+    inset 0 0 0 5px var(--ember-brass-line),
+    var(--shadow-md);
+}
+[data-theme="ember-noir"] .st-logo {
+  border-radius: 8px;
+  color: #1a0f08;
+  background-image: linear-gradient(180deg, #ffc27a, #ff9f43 55%, #e8801f);
+  box-shadow: inset 0 1px 0 rgba(255, 236, 210, 0.6), inset 0 -2px 0 rgba(120, 50, 0, 0.35), 0 0 0 1px rgba(224, 170, 100, 0.5);
+}
+[data-theme="ember-noir"] .st-wordmark { font-family: var(--font-mono); font-weight: 700; letter-spacing: 0.04em; font-size: 1.35rem; }
+[data-theme="ember-noir"] .st-tagline  { font-family: var(--font-mono); letter-spacing: 0.3em; }
+[data-theme="ember-noir"] .standalone-select,
+[data-theme="ember-noir"] .standalone-btn,
+[data-theme="ember-noir"] .cloud-badge { border-radius: 8px; }
+[data-theme="ember-noir"] .st-seg { border-radius: 10px; }
+[data-theme="ember-noir"] .st-seg .standalone-btn { border-radius: 6px; }
+
+[data-theme="ember-noir"] .glass,
+[data-theme="ember-noir"] .glass-card { background: rgba(26, 20, 17, 0.8); }
+
+/* Toast: brass tag with an amber bar */
+[data-theme="ember-noir"] .hub-cf-toast {
+  border-radius: 8px;
+  background: rgba(26, 20, 17, 0.96);
+  border: 1px solid var(--ember-brass-line);
+  border-left: 4px solid var(--accent-primary);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), inset 0 0 0 3px rgba(26, 20, 17, 1), inset 0 0 0 4px var(--ember-brass-line);
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Buttons that hard-code black ink: use warm ink on amber */
+[data-theme="ember-noir"] .btn-primary {
+  color: #1a0f08;
+  border-radius: 8px;
+  background-image: linear-gradient(180deg, #ffb865, #ff9f43 55%, #f08a2a);
+  box-shadow: inset 0 1px 0 rgba(255, 236, 210, 0.55), inset 0 -2px 0 rgba(120, 50, 0, 0.35), 0 8px 18px -8px rgba(255, 159, 67, 0.55);
+}
+
+
+/* ════════════════════════════════════════════════════════════
+   B) CASHFLOW SKIN (--cfk-*)
+   ════════════════════════════════════════════════════════════ */
+:root[data-theme="ember-noir"] {
+  --cfk-bg: #110c0a;  --cfk-surface: #1a1411;  --cfk-elevated: #261d18;
+  --cfk-card: #1a1411;  --cfk-glass: rgba(26, 20, 17, 0.86);
+  --cfk-line: rgba(224, 170, 100, 0.20);  --cfk-line-strong: rgba(224, 170, 100, 0.46);
+  --cfk-hi: rgba(255, 159, 67, 0.07);
+  --cfk-accent: #ff9f43;  --cfk-accent-2: #ff6a4d;  --cfk-on-accent: #1a0f08;
+  --cfk-income: #8be3a0;  --cfk-expense: #ff7b7b;  --cfk-warn: #ffd166;
+  --cfk-gold: #f0b95a;    --cfk-info: #8fc9f5;
+  --cfk-text: #f4eae2;  --cfk-text-2: #c8b4a5;  --cfk-muted: #9a8576;
+  --cfk-font-num: 'Barlow Condensed', 'Roboto Condensed', 'Arial Narrow', 'Segoe UI', sans-serif;
+  --cfk-label-tt: uppercase;  --cfk-label-ls: 0.16em;  --cfk-label-pre: '◆ ';
+  --cfk-r-sm: 6px;  --cfk-r-lg: 10px;  --cfk-r-xl: 14px;  --cfk-r-pill: 8px;     /* "keycap" controls */
+
+  /* the frame: plate-coloured gap, then a brass rule — outer hairline comes from the border */
+  --cfk-card-shadow:
+    inset 0 0 0 5px var(--cfk-card),
+    inset 0 0 0 6px rgba(224, 170, 100, 0.24),
+    0 18px 32px -22px rgba(0, 0, 0, 0.9);
+  --cfk-card-shadow-lite:
+    inset 0 0 0 5px var(--cfk-card),
+    inset 0 0 0 6px rgba(224, 170, 100, 0.24);
+
+  /* keycap: lit top edge, dark lower edge, warm halo */
+  --cfk-btn-shadow:
+    inset 0 1px 0 rgba(255, 236, 210, 0.55),
+    inset 0 -2px 0 rgba(120, 50, 0, 0.38),
+    0 8px 18px -8px rgba(255, 159, 67, 0.55);
+  --cfk-btn-shadow-h:
+    inset 0 1px 0 rgba(255, 236, 210, 0.65),
+    inset 0 -2px 0 rgba(120, 50, 0, 0.38),
+    0 12px 24px -8px rgba(255, 159, 67, 0.72);
+  --cfk-ring-glow: drop-shadow(0 0 4px rgba(255, 159, 67, 0.4));
+  --cfk-text-glow: none;
+  --cfk-lift: translateY(-2px);
+
+  /* layer 1 = lamp light from the top; layers 2-5 = brass rivets in the four corners */
+  --cfk-deco:
+    linear-gradient(180deg, rgba(255, 159, 67, 0.09), transparent 42%),
+    radial-gradient(circle at 38% 34%, #ffe2bb 0 0.7px, #e0a04c 1.7px, #8a5014 3.1px, transparent 3.3px),
+    radial-gradient(circle at 38% 34%, #ffe2bb 0 0.7px, #e0a04c 1.7px, #8a5014 3.1px, transparent 3.3px),
+    radial-gradient(circle at 38% 34%, #ffe2bb 0 0.7px, #e0a04c 1.7px, #8a5014 3.1px, transparent 3.3px),
+    radial-gradient(circle at 38% 34%, #ffe2bb 0 0.7px, #e0a04c 1.7px, #8a5014 3.1px, transparent 3.3px);
+  --cfk-deco-size: 100% 100%, 9px 9px, 9px 9px, 9px 9px, 9px 9px;
+  --cfk-deco-pos:  0 0, left 11px top 11px, right 11px top 11px, left 11px bottom 11px, right 11px bottom 11px;
+  --cfk-deco-lite: linear-gradient(180deg, rgba(255, 159, 67, 0.07), transparent 42%);   /* Lite: keep the frame, drop the rivets */
+
+  --cfk-overlay: rgba(10, 5, 3, 0.76);
+  --cfk-heat-0: #e9c46a; --cfk-heat-1: #ff9f43; --cfk-heat-2: #f2672a; --cfk-heat-3: #e5383b;     /* sand → amber → ember → red */
+  --cfk-val-a: linear-gradient(180deg, #fff0d2, #ffb454 52%, #f08a2a);          /* molten gold */
+  --cfk-val-b: linear-gradient(180deg, #ffd8b0, #ff8a5c 55%, #e5583a);          /* copper */
+  --cfk-scheme: dark;
+
+  /* canvas chart signature (cashflow.js _cfcSkin). Unset = default look of the other themes. */
+  --cfk-chart-bar:        metal;                      /* molten-metal bars + brass top rim */
+  --cfk-chart-radius:     3;                          /* plate corners instead of 6px pills */
+  --cfk-chart-grid:       1 4;                        /* dotted leaders, like the ledger rows */
+  --cfk-chart-grid-color: rgba(224, 170, 100, 0.30);
+  --cfk-chart-base:       double;                     /* double rule on the zero line */
+  --cfk-chart-point:      diamond;                    /* ◆ markers */
+  --cfk-chart-plate:      brass;                      /* gauge ticks + brass spine on the plot */
+  --cfk-chart-caps:       1;                          /* engraved UPPERCASE tooltip title */
+  --cfk-chart-tick:       12;                         /* condensed face needs a larger size */
+  --cfk-chart-brass:      #e0aa64;
+  --cfk-chart-tip-r:      5;
+  --cfk-chart-badge-r:    3;
+}
+
+/* ── Typography: engraved, condensed, tabular ── */
+:root:root[data-theme="ember-noir"] body .hub-cf-card-value {
+  font-size: 2.15rem; font-weight: 600; letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+:root:root[data-theme="ember-noir"] body .hub-cf-card-value--income,
+:root:root[data-theme="ember-noir"] body .hub-cf-card-value--expense { text-shadow: 0 1px 0 rgba(0, 0, 0, 0.65); }
+:root:root[data-theme="ember-noir"] body .hub-cf-card-label,
+:root:root[data-theme="ember-noir"] body .hub-cf-card-sub { font-weight: 600; }
+:root:root[data-theme="ember-noir"] body .hub-cf-card-label { font-size: 0.78rem; }
+:root:root[data-theme="ember-noir"] body .hub-cf-card-label::before { color: var(--cfk-accent); margin-right: 2px; font-size: 0.7em; vertical-align: 0.12em; }
+:root:root[data-theme="ember-noir"] body .hub-cf-chart-title,
+:root:root[data-theme="ember-noir"] body .hub-cf-ledger-title { font-size: 0.9rem; font-weight: 600; color: var(--cfk-text); }
+:root:root[data-theme="ember-noir"] body .hub-cf-table td { font-size: 0.95rem; }
+:root:root[data-theme="ember-noir"] body .hub-cf-tx-income td:nth-child(4),
+:root:root[data-theme="ember-noir"] body .hub-cf-tx-expense td:nth-child(4) { font-size: 1.05rem; font-variant-numeric: tabular-nums lining-nums; }
+
+/* ── Frame extras ── */
+:root:root[data-theme="ember-noir"] body .hub-cf-card,
+:root:root[data-theme="ember-noir"] body .hub-cf-chart-section,
+:root:root[data-theme="ember-noir"] body .hub-cf-ledger { border-color: rgba(224, 170, 100, 0.30); border-radius: var(--cfk-r-lg); }
+:root:root[data-theme="ember-noir"] body .hub-cf-card--income  { border-color: color-mix(in srgb, var(--cfk-income) 45%, rgba(224, 170, 100, 0.3)); }
+:root:root[data-theme="ember-noir"] body .hub-cf-card--expense { border-color: color-mix(in srgb, var(--cfk-expense) 45%, rgba(224, 170, 100, 0.3)); }
+:root:root[data-theme="ember-noir"] body .hub-cf-modal,
+:root:root[data-theme="ember-noir"] body .hub-cf-ai-key-modal-content,
+:root:root[data-theme="ember-noir"] body .hub-cf-bs-panel { border-color: rgba(224, 170, 100, 0.5); }
+
+/* ── Keycap controls ── */
+:root:root[data-theme="ember-noir"] body .hub-cf-btn--add,
+:root:root[data-theme="ember-noir"] body .hub-cf-modal-btn--save,
+:root:root[data-theme="ember-noir"] body .cfg-btn--primary {
+  background-image: linear-gradient(180deg, #ffb865, #ff9f43 55%, #f08a2a);
+  font-family: var(--cfk-font-num); font-weight: 700; font-size: 0.95rem;
+  text-transform: uppercase; letter-spacing: 0.14em;
+}
+:root:root[data-theme="ember-noir"] body .hub-cf-btn--add:hover,
+:root:root[data-theme="ember-noir"] body .hub-cf-modal-btn--save:hover,
+:root:root[data-theme="ember-noir"] body .cfg-btn--primary:hover { filter: brightness(1.06); }
+:root:root[data-theme="ember-noir"] body .hub-cf-btn--add:active,
+:root:root[data-theme="ember-noir"] body .hub-cf-modal-btn--save:active { transform: translateY(1px); box-shadow: inset 0 2px 4px rgba(120, 50, 0, 0.5); }
+:root:root[data-theme="ember-noir"] body .hub-cf-btn--export,
+:root:root[data-theme="ember-noir"] body .hub-cf-btn--import,
+:root:root[data-theme="ember-noir"] body .hub-cf-modal-btn--cancel {
+  font-family: var(--cfk-font-num); font-weight: 600; font-size: 0.95rem;
+  text-transform: uppercase; letter-spacing: 0.12em;
+  border-color: rgba(224, 170, 100, 0.34);
+  box-shadow: inset 0 1px 0 rgba(255, 220, 180, 0.07), inset 0 -2px 0 rgba(0, 0, 0, 0.3);
+}
+:root:root[data-theme="ember-noir"] body .hub-cf-tab-switcher-btn { font-family: var(--cfk-font-num); font-size: 0.95rem; letter-spacing: 0.1em; text-transform: uppercase; }
+:root:root[data-theme="ember-noir"] body .hub-cf-tab-switcher-btn[aria-selected="true"]::before {
+  background: linear-gradient(180deg, #ffb865, #ff9f43 55%, #f08a2a);
+  box-shadow: inset 0 1px 0 rgba(255, 236, 210, 0.55), inset 0 -2px 0 rgba(120, 50, 0, 0.38);
+}
+:root:root[data-theme="ember-noir"] body .hub-cf-tab { font-family: var(--cfk-font-num); font-size: 0.92rem; letter-spacing: 0.1em; text-transform: uppercase; }
+:root:root[data-theme="ember-noir"] body .hub-cf-form-input,
+:root:root[data-theme="ember-noir"] body .hub-cf-category-select,
+:root:root[data-theme="ember-noir"] body .hub-cf-textarea {
+  background: rgba(10, 6, 4, 0.55);
+  border-color: rgba(224, 170, 100, 0.26);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.5);              /* sunk into the plate */
+}
+:root:root[data-theme="ember-noir"] body .hub-cf-amount-input { font-size: 1.5rem; font-weight: 600; }
+:root:root[data-theme="ember-noir"] body .hub-cf-form-label { font-family: var(--cfk-font-num); font-size: 0.78rem; letter-spacing: 0.16em; }
+:root:root[data-theme="ember-noir"] body .hub-cf-cat-chip { border-radius: 5px; font-family: var(--cfk-font-num); font-size: 0.78rem; letter-spacing: 0.1em; }
+
+/* ── Ledger: double rule under the head, dotted leaders between rows ── */
+:root:root[data-theme="ember-noir"] body .hub-cf-table th {
+  border-bottom: 3px double rgba(224, 170, 100, 0.5);
+  font-family: var(--cfk-font-num); font-size: 0.8rem; letter-spacing: 0.16em; color: var(--cfk-text-2);
+}
+:root:root[data-theme="ember-noir"] body .hub-cf-table td { border-bottom: 1px dotted rgba(224, 170, 100, 0.34); }
+
+/* ── Cyberpunk-only extras the skin hands to "every other theme": off ── */
+:root:root[data-theme="ember-noir"] body:not(.theme-optimized):not(.perf-lite) .hub-cf-heatmap-cell--level-3 {
+  animation: none !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hc) 60%, transparent);
+}
+:root:root[data-theme="ember-noir"] body:not(.theme-optimized) .hub-cf-chart-title::before {
+  content: '◆'; margin-right: 8px; color: var(--cfk-accent); font-size: 0.7em; vertical-align: 0.1em;
+}
+
+/* Optimize (flat terminal) wins over all of the above by design; keep brass-free */
+
+
+/* ════════════════════════════════════════════════════════════
+   C) FLASHCARD (Hub.OS) — same frame + rivets on the study card
+   ════════════════════════════════════════════════════════════ */
+[data-theme="ember-noir"] .card-front::after { display: none; }                       /* cyberpunk corner glow */
+[data-theme="ember-noir"] .card-front,
+[data-theme="ember-noir"] .card-back {
+  border-color: rgba(224, 170, 100, 0.34);
+  box-shadow: inset 0 0 0 6px var(--bg-surface), inset 0 0 0 7px var(--ember-brass-line);
+}
+[data-theme="ember-noir"] .card-front {
+  background-image:
+    radial-gradient(circle at 38% 34%, #ffe2bb 0 0.7px, #e0a04c 1.7px, #8a5014 3.1px, transparent 3.3px),
+    radial-gradient(circle at 38% 34%, #ffe2bb 0 0.7px, #e0a04c 1.7px, #8a5014 3.1px, transparent 3.3px),
+    radial-gradient(circle at 38% 34%, #ffe2bb 0 0.7px, #e0a04c 1.7px, #8a5014 3.1px, transparent 3.3px),
+    radial-gradient(circle at 38% 34%, #ffe2bb 0 0.7px, #e0a04c 1.7px, #8a5014 3.1px, transparent 3.3px),
+    linear-gradient(180deg, rgba(255, 159, 67, 0.07), transparent 45%);
+  background-size: 9px 9px, 9px 9px, 9px 9px, 9px 9px, 100% 100%;
+  background-position: left 12px top 12px, right 12px top 12px, left 12px bottom 12px, right 12px bottom 12px, 0 0;
+  background-repeat: no-repeat;
+}
+@supports (color: color-mix(in srgb, red 50%, blue)) {
+  [data-theme="ember-noir"] .card-front[class*="card-state-"] {
+    border-color: color-mix(in srgb, var(--fc-state) 30%, rgba(224, 170, 100, 0.34));
+    box-shadow: inset 0 0 0 6px var(--bg-surface), inset 0 0 0 7px var(--ember-brass-line),
+                0 0 26px -12px color-mix(in srgb, var(--fc-state) 55%, transparent);
+  }
+  [data-theme="ember-noir"] .card-back[class*="card-state-"] {
+    border-color: color-mix(in srgb, var(--fc-state) 26%, rgba(224, 170, 100, 0.34));
+  }
+}
+[data-theme="ember-noir"] .card-back { background: linear-gradient(160deg, rgba(255, 159, 67, 0.07), rgba(26, 20, 17, 0.92) 55%); }
+[data-theme="ember-noir"] .card-front .card-term { font-family: var(--font-mono); font-weight: 600; letter-spacing: 0.03em; font-size: clamp(2rem, 1.4rem + 3vw, 3.4rem); }
+[data-theme="ember-noir"] .card-pos,
+[data-theme="ember-noir"] .card-state-badge,
+[data-theme="ember-noir"] .fcq-type-label { font-family: var(--font-mono); letter-spacing: 0.14em; border-radius: 4px; }
+[data-theme="ember-noir"] .fcq-type-label { border-style: solid; border-color: var(--ember-brass-line); }
+[data-theme="ember-noir"] .fcq-type-label::before { content: '◆ '; color: var(--accent-primary); }
+[data-theme="ember-noir"] .card-hint { font-family: var(--font-mono); letter-spacing: 0.14em; }
+
+/* answer keys + grade buttons = keycaps */
+[data-theme="ember-noir"] .fcq-choice,
+[data-theme="ember-noir"] .srs-assessment-btn,
+[data-theme="ember-noir"] .cloze-btn,
+[data-theme="ember-noir"] .fcq-replay-btn {
+  border-radius: 8px;
+  box-shadow: inset 0 1px 0 rgba(255, 220, 180, 0.07), inset 0 -2px 0 rgba(0, 0, 0, 0.32);
+}
+[data-theme="ember-noir"] .fcq-choice { font-family: var(--font-body); font-size: 1.08rem; }
+[data-theme="ember-noir"] .fcq-choice.is-selected { box-shadow: 0 0 0 2px var(--accent-primary), inset 0 -2px 0 rgba(0, 0, 0, 0.32); }
+[data-theme="ember-noir"] .fcq-choice.is-correct  { box-shadow: 0 0 0 2px var(--success), inset 0 -2px 0 rgba(0, 0, 0, 0.32); }
+[data-theme="ember-noir"] .fcq-choice.is-wrong    { box-shadow: 0 0 0 2px var(--danger), inset 0 -2px 0 rgba(0, 0, 0, 0.32); }
+[data-theme="ember-noir"] .srs-assessment-btn.is-suggested { box-shadow: 0 0 0 2px var(--accent-primary), inset 0 -2px 0 rgba(0, 0, 0, 0.32); }
+[data-theme="ember-noir"] .fcq-key,
+[data-theme="ember-noir"] .shortcut-hint { border-radius: 4px; font-family: var(--font-mono); }
+[data-theme="ember-noir"] .fcq-suggest-tag { border-radius: 3px; }
+[data-theme="ember-noir"] .cyber-cloze-input { background: rgba(10, 6, 4, 0.55); border-color: rgba(224, 170, 100, 0.34); box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.5); }
+[data-theme="ember-noir"] .cyber-cloze-input:focus { border-color: var(--accent-primary); box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.5), 0 0 0 3px rgba(255, 159, 67, 0.2); }
+
+/* Lite: frames are plain box-shadows (cheap) and stay; hover lift off */
+[data-theme="ember-noir"] body.perf-lite .fcq-choice:hover { transform: none; }
