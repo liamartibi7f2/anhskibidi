@@ -4045,3 +4045,348 @@ body.perf-lite {
   .hub-cf-debt-ledger .dl-panel { padding: 14px 12px; }
   .hub-cf-form-grid, .hub-cf-debt-interest-row { grid-template-columns: 1fr; }
 }
+
+/* ============================================================
+   8. MOBILE LAYER — touch-first, safe-area aware
+   (đặt cuối file để thắng các rule cũ; dùng :root body khi cần
+    vượt specificity của style do cashflow.js chèn lúc chạy)
+   ============================================================ */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+body { min-height: 100vh; min-height: 100dvh; overscroll-behavior-y: none; }
+button, [role="tab"], select, summary, label[for] {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Thanh điều hướng dưới: ẩn trên desktop */
+.st-bottomnav { display: none; }
+
+/* ---------- Tablet & mobile (<= 768px) ---------- */
+@media (max-width: 768px) {
+  .standalone-shell {
+    overflow-x: clip;
+    padding-top: max(12px, env(safe-area-inset-top));
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+    padding-bottom: calc(104px + env(safe-area-inset-bottom));
+  }
+  .standalone-topbar { margin-bottom: 16px; }
+
+  /* Thanh công cụ: 1 hàng cuộn ngang (tiết kiệm chiều cao) */
+  .standalone-controls {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 8px;
+    margin: 0 -4px;
+    padding: 14px 4px 2px;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 26px), transparent 100%);
+            mask-image: linear-gradient(90deg, #000 calc(100% - 26px), transparent 100%);
+  }
+  .standalone-controls::-webkit-scrollbar { display: none; }
+  .standalone-controls > * { flex: 0 0 auto; scroll-snap-align: start; }
+  .st-divider { display: none; }
+
+  /* Chống iOS tự phóng to khi focus ô nhập (cần >= 16px) */
+  :root body input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+  :root body select,
+  :root body textarea,
+  :root body .hub-cf-form-input,
+  :root body .standalone-select {
+    font-size: 16px !important;
+  }
+
+  /* Modal -> bottom sheet */
+  :root body .hub-cf-overlay { align-items: flex-end; justify-content: center; }
+  :root body .hub-cf-modal,
+  :root body .hub-cf-debt-modal,
+  :root body .hub-cf-debt-history-modal,
+  :root body .hub-cf-debt-recovery-modal {
+    width: 100%;
+    max-width: none;
+    max-height: 92vh;
+    max-height: 92dvh;
+    margin: 0;
+    border-radius: 22px 22px 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+    animation: st-sheet-up 300ms var(--ease-out-expo);
+  }
+  /* thanh nắm kéo giả cho bottom sheet */
+  :root body .hub-cf-modal-header { position: relative; padding-top: 22px; }
+  :root body .hub-cf-modal-header::before {
+    content: "";
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    width: 38px;
+    height: 4px;
+    margin-left: -19px;
+    border-radius: 4px;
+    background: var(--glass-border);
+    opacity: 0.9;
+  }
+  /* Đầu modal: hàng 1 = tiêu đề + nút đóng, hàng 2 = công tắc Chi phí / Thu nhập */
+  :root body .hub-cf-modal-header { flex-wrap: wrap; gap: 10px; padding-left: 18px; padding-right: 14px; }
+  :root body .hub-cf-modal-title { white-space: nowrap; flex: 1 1 auto; order: 1; }
+  :root body .hub-cf-modal-close { flex: 0 0 auto; order: 2; }
+  :root body .hub-cf-modal-header > :not(.hub-cf-modal-title):not(.hub-cf-modal-close) { order: 3; flex: 1 1 100%; min-width: 0; }
+  /* nút Lưu/Huỷ luôn nằm trong tầm ngón cái, không bị che bởi thanh home */
+  :root body .hub-cf-form-actions {
+    position: sticky;
+    bottom: 0;
+    padding-bottom: calc(14px + env(safe-area-inset-bottom));
+    background: var(--bg-surface, #12121a);
+  }
+  :root body .hub-cf-form-actions > * { flex: 1 1 0; min-height: 46px; }
+
+  /* Modal khoá AI / bộ lọc */
+  :root body .hub-cf-ai-key-modal { align-items: flex-end; padding: 0; }
+  :root body .hub-cf-ai-key-modal-content {
+    width: 100%;
+    max-width: none;
+    max-height: 92dvh;
+    overflow-y: auto;
+    border-radius: 22px 22px 0 0;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+  }
+  :root body .hub-cf-filter-popover {
+    max-width: calc(100vw - 16px);
+  }
+
+  /* Ngăn kéo ngân sách: toàn màn hình */
+  :root body .hub-cf-bs-panel { width: 100vw; border-radius: 0; }
+  .hub-cf-bs-head { padding: max(16px, env(safe-area-inset-top)) 18px 14px; }
+  .hub-cf-bs-body { padding: 16px 18px calc(24px + env(safe-area-inset-bottom)); }
+
+  /* Toast nằm trên thanh điều hướng, không tràn mép */
+  .hub-cf-toast {
+    bottom: calc(92px + env(safe-area-inset-bottom));
+    max-width: calc(100vw - 32px);
+    white-space: normal;
+    text-align: center;
+    padding: 12px 20px;
+  }
+
+  /* Bảng giao dịch -> danh sách thẻ */
+  /* tránh cuộn lồng trong cuộn: để cả trang cuộn */
+  :root body .hub-cf-table-wrap { max-height: none !important; overflow: visible !important; }
+  .hub-cf-table, .hub-cf-table tbody { display: block; }
+  .hub-cf-table thead { display: block; position: static; }
+  .hub-cf-table thead tr {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 0 0 10px;
+  }
+  .hub-cf-table th {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    width: auto !important;
+    padding: 6px 12px;
+    border: 1px solid var(--glass-border);
+    border-radius: 999px;
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .hub-cf-table th.hub-cf-col--act { display: none; }
+  .hub-cf-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas: "desc desc amt" "date cat act";
+    align-items: center;
+    gap: 4px 10px;
+    padding: 12px 4px;
+    border-bottom: 1px solid var(--glass-border);
+  }
+  .hub-cf-table tbody td { display: block; padding: 0 !important; border: 0 !important; background: transparent !important; min-width: 0; }
+  .hub-cf-table tbody td:nth-child(1) { grid-area: date; font-size: 0.72rem; color: var(--text-muted); }
+  .hub-cf-table tbody td:nth-child(2) { grid-area: desc; font-size: 0.95rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hub-cf-table tbody td:nth-child(3) { grid-area: cat; justify-self: start; }
+  .hub-cf-table tbody td:nth-child(4) { grid-area: amt; font-size: 0.95rem; text-align: right; white-space: nowrap; }
+  .hub-cf-table tbody td:nth-child(5) { grid-area: act; text-align: right; }
+  .hub-cf-table tbody td[colspan] { display: block; grid-column: 1 / -1; }
+}
+
+@keyframes st-sheet-up {
+  from { transform: translateY(40px); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
+
+/* ---------- Thiết bị cảm ứng: vùng chạm >= 44px ---------- */
+@media (pointer: coarse) {
+  /* Nút có thể tăng kích thước thật */
+  :root body .standalone-btn,
+  :root body .cloud-badge,
+  :root body .standalone-select,
+  :root body .hub-cf-tab-switcher-btn,
+  :root body .hub-cf-view-toggle-btn,
+  :root body .cfx-tab,
+  :root body .hub-cf-tab,
+  :root body .hub-cf-btn,
+  :root body .hub-cf-modal-btn--save,
+  :root body .hub-cf-modal-btn--cancel,
+  :root body .hub-cf-chart-filter,
+  :root body .cfd-hide-btn,
+  :root body .cfd-more,
+  :root body .cfg-btn { min-height: 44px; }
+  .st-seg .standalone-btn { min-height: 38px; }
+  :root body .hub-cf-modal-close { width: 44px; height: 44px; }
+
+  /* Nút icon nhỏ: giữ nguyên hình, mở rộng vùng chạm vô hình */
+  .hub-cf-card-edit-btn,
+  .hub-cf-delete-btn,
+  .hub-cf-month-nav,
+  .hub-cf-edit-btn,
+  .hub-cf-debt-edit-btn,
+  .cfx-iconbtn,
+  .hub-cf-filter-icon { position: relative; }
+  .hub-cf-card-edit-btn::after,
+  .hub-cf-delete-btn::after,
+  .hub-cf-month-nav::after,
+  .hub-cf-edit-btn::after,
+  .hub-cf-debt-edit-btn::after,
+  .cfx-iconbtn::after,
+  .hub-cf-filter-icon::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
+  }
+
+  /* Không có hover thật: bỏ hiệu ứng nhấc thẻ gây giật khi chạm */
+  .glass-card:hover, .hub-cf-card:hover { transform: none; box-shadow: none; }
+  .hub-cf-table tbody tr:hover td { background: transparent; }
+
+  /* Phản hồi khi nhấn */
+  .standalone-btn:active, .cloud-badge:active,
+  .hub-cf-btn:active, .hub-cf-tab-switcher-btn:active,
+  .st-nav-item:active { transform: scale(0.97); }
+}
+
+/* ---------- Điện thoại nhỏ (<= 480px) ---------- */
+@media (max-width: 480px) {
+  .hub-cf-container { gap: 16px; }
+  .hub-cf-tab-switcher { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .hub-cf-tab-switcher::-webkit-scrollbar { display: none; }
+  .cfx-kpis, .cfc-kpis { grid-template-columns: 1fr 1fr; }
+  .cfx-alloc__row { grid-template-columns: 88px 1fr 64px; }
+  .cfx-cat { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) 46px; }
+  .cfx-cat__bar { display: none; }
+  .hub-cf-heatmap-tooltip { max-width: calc(100vw - 16px); }
+}
+
+/* ============================================================
+   9. BOTTOM NAV (.st-bottomnav) — chỉ hiện <= 768px
+   ============================================================ */
+@media (max-width: 768px) {
+  .st-bottomnav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 200; /* dưới modal (300+) và toast (10001) */
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-around;
+    padding: 6px max(8px, env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    background: var(--bg-surface);
+    background: color-mix(in srgb, var(--bg-surface) 93%, transparent);
+    border-top: 1px solid var(--glass-border);
+    backdrop-filter: blur(18px) saturate(150%);
+    -webkit-backdrop-filter: blur(18px) saturate(150%);
+    box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.25);
+    transition: transform 0.25s var(--ease-out-expo);
+  }
+  .st-nav-item {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    min-height: 48px;
+    padding: 6px 2px 4px;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: var(--font-body);
+    font-size: 0.62rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    transition: color 0.2s, background-color 0.2s, transform 0.15s;
+  }
+  .st-nav-item svg {
+    width: 21px;
+    height: 21px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .st-nav-item span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .st-nav-item.is-active { color: var(--accent-primary); }
+  .st-nav-item.is-active svg { filter: drop-shadow(var(--accent-glow)); }
+
+  /* Nút cộng nổi ở giữa */
+  .st-nav-fab {
+    flex: 0 0 56px;
+    width: 56px;
+    height: 56px;
+    margin: -22px 6px 0;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 50%;
+    color: var(--bg-deep);
+    background-color: var(--accent-primary);
+    background-image: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    transition: transform 0.15s;
+  }
+  .st-nav-fab:active { transform: scale(0.92); }
+  .st-nav-fab svg {
+    width: 26px;
+    height: 26px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.4;
+    stroke-linecap: round;
+  }
+
+  /* Ẩn thanh dưới khi mở modal (class do walletos-mobile.js gắn) hoặc đang gõ bàn phím */
+  body.st-sheet-open .st-bottomnav,
+  body:has(input:focus, textarea:focus, select:focus) .st-bottomnav {
+    transform: translateY(120%);
+    pointer-events: none;
+  }
+
+  /* Khi cuộn tới khối, chừa mép trên */
+  .cfd-host, #cfg-goals, .hub-cf-ledger, .hub-cf-debt-ledger, #cfx-ai { scroll-margin-top: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .st-bottomnav, .st-nav-item, .st-nav-fab { transition: none; }
+  :root body .hub-cf-modal { animation: none; }
+}
+body.perf-lite .st-bottomnav,
+body.theme-optimized .st-bottomnav {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+body.theme-optimized .st-bottomnav { background: #000; border-top-color: rgba(0, 255, 65, 0.25); }
