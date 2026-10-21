@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isOwner(uid) { return signedIn() && request.auth.uid == uid; }
+
+    // Admin = tài khoản có document admins/{uid}.
+    // Document này CHỈ tạo được thủ công trong Firebase Console (client không ghi được).
+    function isAdmin() {
+      return signedIn() &&
+        exists(/databases/$(db)/documents/admins/$(request.auth.uid));
+    }
+
+    // Client chỉ được đọc đúng document của chính mình (để biết mình có phải admin không)
+    match /admins/{id} {
+      allow read: if isOwner(id);
+      allow write: if false;
+    }
+
+    // Danh bạ người dùng: mỗi người tự ghi hồ sơ của mình, admin được đọc tất cả
+    match /userDirectory/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow create, update: if isOwner(uid);
+      allow delete: if false;
+    }
+
+    // Dữ liệu thu chi:
+    //   - Chủ tài khoản: đọc + ghi
+    //   - Admin: CHỈ ĐỌC (không có quyền write dù ở bất kỳ document nào)
+    match /users/{uid}/cashflow/{doc} {
+      allow read:  if isOwner(uid) || isAdmin();
+      allow write: if isOwner(uid);
+    }
+
+    // Nhật ký xem: admin tự ghi (chỉ được ghi bằng đúng uid của mình), không sửa/xóa được
+    match /auditLogs/{id} {
+      allow create: if isAdmin()
+                    && request.resource.data.adminUid == request.auth.uid;
+      allow read: if isAdmin();
+      allow update, delete: if false;
+    }
+  }
+}

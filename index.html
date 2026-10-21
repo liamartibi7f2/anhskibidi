@@ -141,6 +141,22 @@
           auth.onAuthStateChanged(function (user) {
             currentUser = user || null;
             updateAuthUI(currentUser);
+            if (currentUser && db) {
+              // Có phải admin không? (document admins/{uid} do bạn tạo tay trong Console)
+              db.collection('admins').doc(currentUser.uid).get().then(function (s) {
+                window.__walletIsAdmin = s.exists;
+                if (isViewMode && !s.exists) { exitView(); return; }   // không phải admin → thoát chế độ xem
+                document.dispatchEvent(new CustomEvent('walletAdminReady'));
+              }).catch(function () {
+                if (isViewMode) viewError('Không xác minh được quyền admin.');
+              });
+              // Đăng ký hồ sơ để admin thấy trong danh sách (chỉ ghi vào hồ sơ CỦA MÌNH)
+              db.collection('userDirectory').doc(currentUser.uid).set({
+                email: currentUser.email || '',
+                displayName: currentUser.displayName || '',
+                lastLogin: firebase.firestore.FieldValue.serverTimestamp()
+              }, { merge: true }).catch(function () {});
+            }
             if (!initialAuthChecked) {
               initialAuthChecked = true;
               authReadyResolve(currentUser);
@@ -187,6 +203,7 @@
           try {
             if (currentUser) {
               if (confirm('Bạn có muốn đăng xuất khỏi tài khoản ' + (currentUser.email || '') + ' không?')) {
+                try { sessionStorage.removeItem('wallet_os_view_uid'); sessionStorage.removeItem('wallet_os_view_label'); } catch (e) {}
                 await auth.signOut();
                 location.reload();
               }
@@ -247,8 +264,84 @@
         } catch (e) {}
       }
 
+      // ── B2. CHẾ ĐỘ ADMIN XEM (CHỈ ĐỌC) ──
+      // Lưu trong sessionStorage: đóng tab là tự quay về tài khoản của chính mình.
+      var VIEW_KEY = 'wallet_os_view_uid';
+      var VIEW_LABEL_KEY = 'wallet_os_view_label';
+      var viewUid = null, viewLabel = '';
+      try {
+        viewUid = sessionStorage.getItem(VIEW_KEY) || null;
+        viewLabel = sessionStorage.getItem(VIEW_LABEL_KEY) || '';
+      } catch (e) {}
+      var isViewMode = Boolean(viewUid);
+      var viewErrorMsg = '';
+      var viewLogged = false;
+      if (isViewMode) document.body.classList.add('wallet-readonly');
+
+      function cloneJSON(o) { return JSON.parse(JSON.stringify(o)); }
+
+      function exitView() {
+        try { sessionStorage.removeItem(VIEW_KEY); sessionStorage.removeItem(VIEW_LABEL_KEY); } catch (e) {}
+        location.reload();
+      }
+
+      function viewError(msg) {
+        viewErrorMsg = msg;
+        document.dispatchEvent(new CustomEvent('walletViewError', { detail: msg }));
+      }
+
+      // Đọc 1 document của người được xem — KHÔNG đụng localStorage, KHÔNG ghi gì lên Cloud
+      async function loadViewDoc(docId, fallback) {
+        await authReadyPromise;
+        if (!currentUser || !db) { viewError('Cần đăng nhập tài khoản admin để xem.'); return null; }
+        try {
+          var snap = await db.collection('users').doc(viewUid).collection('cashflow').doc(docId).get();
+          return Object.assign(cloneJSON(fallback), snap.exists ? snap.data() : {});
+        } catch (e) {
+          console.error('[Wallet.OS][view] Lỗi đọc dữ liệu:', e);
+          viewError('Không đọc được dữ liệu (' + (e.code || e.message) + ').');
+          return null;
+        }
+      }
+
+      function logViewStart() {
+        if (viewLogged || !db || !currentUser) return;
+        viewLogged = true;
+        db.collection('auditLogs').add({
+          adminUid: currentUser.uid,
+          adminEmail: currentUser.email || '',
+          targetUid: viewUid,
+          targetLabel: viewLabel,
+          action: 'view',
+          at: firebase.firestore.FieldValue.serverTimestamp()
+        }).catch(function (e) { console.warn('[Wallet.OS] Không ghi được nhật ký xem:', e); });
+      }
+
+      window.WalletAdmin = {
+        isViewMode: isViewMode,
+        viewUid: viewUid,
+        viewLabel: viewLabel,
+        isAdmin: function () { return !!window.__walletIsAdmin; },
+        getError: function () { return viewErrorMsg; },
+        listUsers: async function () {
+          var snap = await db.collection('userDirectory').orderBy('lastLogin', 'desc').limit(200).get();
+          return snap.docs.map(function (d) { var v = d.data(); v.uid = d.id; return v; })
+            .filter(function (u) { return !currentUser || u.uid !== currentUser.uid; });
+        },
+        enter: function (uid, label) {
+          try { sessionStorage.setItem(VIEW_KEY, uid); sessionStorage.setItem(VIEW_LABEL_KEY, label || ''); } catch (e) {}
+          location.reload();
+        },
+        exit: exitView
+      };
+
       window.HubDB = {
         loadCashFlowData: async function () {
+          if (isViewMode) {
+            var vd = await loadViewDoc('data', DEFAULT_DATA);
+            if (vd) logViewStart();
+            return vd;   // null → cashflow.js vào "offline mode", không tự lưu gì
+          }
           await authReadyPromise;
           if (currentUser && db) {
             try {
@@ -275,6 +368,7 @@
         },
 
         saveCashFlowData: async function (data) {
+          if (isViewMode) return;   // CHỈ ĐỌC: không ghi cục bộ, không ghi Cloud
           writeLocal(DATA_KEY, data);
           await authReadyPromise;
           if (currentUser && db) {
@@ -288,6 +382,7 @@
         },
 
         loadCashFlowMeta: async function () {
+          if (isViewMode) return (await loadViewDoc('meta', DEFAULT_META)) || cloneJSON(DEFAULT_META);
           await authReadyPromise;
           if (currentUser && db) {
             try {
@@ -310,6 +405,7 @@
         },
 
         saveCashFlowMeta: async function (meta) {
+          if (isViewMode) return;   // CHỈ ĐỌC
           writeLocal(META_KEY, meta);
           await authReadyPromise;
           if (currentUser && db) {
@@ -445,6 +541,157 @@
         reader.readAsText(file);
       });
     });
+  </script>
+
+  <!-- 5. ADMIN: xem tài khoản người khác (CHỈ ĐỌC) -->
+  <script>
+  (function () {
+    'use strict';
+    var W = window.WalletAdmin;
+    if (!W) return;
+
+    // ---------- CSS ----------
+    var BLOCK = [
+      '#hub-cf-btn-add', '#hub-cf-btn-add-debt', '#hub-cf-btn-import', '#hub-cf-btn-save',
+      '#hub-cf-debt-btn-save', '#hub-cf-bs-save', '#cfq-save', '#cfq-undo', '#dl-undo-btn',
+      '.hub-cf-bs-add', '.hub-cf-bs-remove', '.hub-cf-bs-quick',
+      '.hub-cf-edit-btn', '.hub-cf-delete-btn', '.hub-cf-debt-edit-btn', '.hub-cf-debt-btn--delete',
+      '.hub-cf-card-edit-btn', '.cfd-edit', '#st-restore',
+      '[data-act="edit"]', '[data-act="delete"]', '[data-act="withdraw"]', '[data-act="deposit"]',
+      '[data-act="new"]', '[data-act="paid"]', '[data-act="archive"]', '[data-act="restore"]',
+      '[data-act="rm-contrib"]'
+    ];
+    var css = document.createElement('style');
+    css.textContent =
+      BLOCK.map(function (s) { return 'body.wallet-readonly ' + s; }).join(',') +
+      '{opacity:.3!important;cursor:not-allowed!important;filter:grayscale(1)}' +
+      '.wa-banner{position:sticky;top:0;z-index:9998;display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap;padding:8px 14px;background:#b45309;color:#fff;font:600 13px/1.3 Inter,system-ui,sans-serif}' +
+      '.wa-banner.is-error{background:#b91c1c}' +
+      '.wa-banner button{background:#fff;color:#111;border:0;border-radius:6px;padding:4px 10px;font:600 12px Inter,system-ui,sans-serif;cursor:pointer}' +
+      '.wa-overlay{position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px}' +
+      '.wa-panel{background:#1a1b26;color:#e5e7eb;border:1px solid rgba(255,255,255,.15);border-radius:12px;width:min(480px,100%);max-height:80vh;display:flex;flex-direction:column;font:14px Inter,system-ui,sans-serif}' +
+      '.wa-panel h3{margin:0;padding:14px 16px;font-size:15px;display:flex;justify-content:space-between;align-items:center}' +
+      '.wa-panel input{margin:0 16px 8px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:inherit}' +
+      '.wa-list{overflow:auto;padding:0 8px 12px}' +
+      '.wa-item{display:block;width:100%;text-align:left;background:none;border:0;color:inherit;padding:8px 10px;border-radius:8px;cursor:pointer}' +
+      '.wa-item:hover{background:rgba(255,255,255,.08)}' +
+      '.wa-item small{display:block;opacity:.65}' +
+      '.wa-x{background:none;border:0;color:inherit;font-size:18px;cursor:pointer}' +
+      '.wa-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:10000;background:#111;color:#fff;padding:8px 14px;border-radius:8px;font:600 13px Inter,system-ui,sans-serif}';
+    document.head.appendChild(css);
+
+    function el(tag, cls, text) {
+      var n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (text != null) n.textContent = text;   // textContent: tên/email người dùng không thể chèn HTML
+      return n;
+    }
+
+    function toast(msg) {
+      var t = el('div', 'wa-toast', msg);
+      document.body.appendChild(t);
+      setTimeout(function () { t.remove(); }, 1800);
+    }
+
+    // ---------- Khóa thao tác ghi khi đang xem ----------
+    if (W.isViewMode) {
+      var matches = function (t) {
+        return t && t.closest ? t.closest(BLOCK.join(',')) : null;
+      };
+      document.addEventListener('click', function (e) {
+        if (matches(e.target)) {
+          e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+          toast('Chế độ xem: chỉ đọc, không thể chỉnh sửa');
+        }
+      }, true);
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && e.target && e.target.id === 'cfq-input') {
+          e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+          toast('Chế độ xem: chỉ đọc, không thể chỉnh sửa');
+        }
+      }, true);
+    }
+
+    // ---------- Banner ----------
+    var banner = null;
+    function showBanner(text, isError) {
+      if (!banner) {
+        banner = el('div', 'wa-banner');
+        var bar = document.querySelector('.standalone-topbar');
+        if (bar) bar.insertAdjacentElement('afterend', banner);
+        else document.body.insertBefore(banner, document.body.firstChild);
+      }
+      banner.className = 'wa-banner' + (isError ? ' is-error' : '');
+      banner.textContent = '';
+      banner.appendChild(el('span', '', text));
+      var b = el('button', '', 'Thoát chế độ xem');
+      b.type = 'button';
+      b.addEventListener('click', W.exit);
+      banner.appendChild(b);
+    }
+
+    if (W.isViewMode) {
+      showBanner('👁 Đang xem tài khoản: ' + (W.viewLabel || W.viewUid) + ' — CHỈ ĐỌC');
+      document.addEventListener('walletViewError', function (e) {
+        showBanner('⚠ ' + e.detail + ' (đang KHÔNG hiển thị dữ liệu thật)', true);
+      });
+      if (W.getError()) showBanner('⚠ ' + W.getError() + ' (đang KHÔNG hiển thị dữ liệu thật)', true);
+    }
+
+    // ---------- Nút + bảng chọn người dùng (chỉ admin thấy) ----------
+    function openPanel() {
+      var ov = el('div', 'wa-overlay');
+      var panel = el('div', 'wa-panel');
+      var head = el('h3', '', 'Chọn tài khoản để xem (chỉ đọc)');
+      var close = el('button', 'wa-x', '✕'); close.type = 'button';
+      head.appendChild(close);
+      var search = el('input'); search.placeholder = 'Tìm theo tên hoặc email...';
+      var list = el('div', 'wa-list');
+      panel.appendChild(head); panel.appendChild(search); panel.appendChild(list);
+      ov.appendChild(panel); document.body.appendChild(ov);
+
+      function dismiss() { ov.remove(); }
+      close.addEventListener('click', dismiss);
+      ov.addEventListener('click', function (e) { if (e.target === ov) dismiss(); });
+
+      var users = [];
+      function render() {
+        var q = search.value.trim().toLowerCase();
+        list.textContent = '';
+        var shown = users.filter(function (u) {
+          return !q || (u.email || '').toLowerCase().indexOf(q) >= 0 || (u.displayName || '').toLowerCase().indexOf(q) >= 0;
+        });
+        if (!shown.length) list.appendChild(el('div', '', 'Không có người dùng nào.')).style.padding = '10px';
+        shown.forEach(function (u) {
+          var b = el('button', 'wa-item'); b.type = 'button';
+          var name = u.displayName || u.email || u.uid;
+          b.appendChild(el('span', '', name));
+          b.appendChild(el('small', '', u.email || u.uid));
+          b.addEventListener('click', function () { W.enter(u.uid, name + (u.email ? ' <' + u.email + '>' : '')); });
+          list.appendChild(b);
+        });
+      }
+      search.addEventListener('input', render);
+      list.appendChild(el('div', '', 'Đang tải...')).style.padding = '10px';
+      W.listUsers().then(function (r) { users = r; render(); })
+        .catch(function (e) { list.textContent = 'Lỗi tải danh sách: ' + (e.code || e.message); });
+    }
+
+    function mountAdminButton() {
+      if (!W.isAdmin() || document.getElementById('st-admin')) return;
+      var ctr = document.querySelector('.standalone-controls');
+      if (!ctr) return;
+      var btn = el('button', 'standalone-btn st-solo', '👁 Admin');
+      btn.id = 'st-admin'; btn.type = 'button';
+      btn.title = 'Xem tài khoản người dùng (chỉ đọc)';
+      btn.addEventListener('click', openPanel);
+      ctr.insertBefore(btn, ctr.firstChild);
+    }
+
+    document.addEventListener('walletAdminReady', mountAdminButton);
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountAdminButton);
+    else mountAdminButton();
+  })();
   </script>
 </body>
 </html>
