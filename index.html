@@ -275,6 +275,7 @@
       } catch (e) {}
       var isViewMode = Boolean(viewUid);
       var viewErrorMsg = '';
+      var viewNote = '';
       var viewLogged = false;
       if (isViewMode) document.body.classList.add('wallet-readonly');
 
@@ -296,6 +297,10 @@
         if (!currentUser || !db) { viewError('Cần đăng nhập tài khoản admin để xem.'); return null; }
         try {
           var snap = await db.collection('users').doc(viewUid).collection('cashflow').doc(docId).get();
+          if (!snap.exists && docId === 'data') {
+            viewNote = 'Chưa có dữ liệu thu chi cho tài khoản/UID này (UID sai hoặc người dùng chưa lưu gì).';
+            document.dispatchEvent(new CustomEvent('walletViewNote', { detail: viewNote }));
+          }
           return Object.assign(cloneJSON(fallback), snap.exists ? snap.data() : {});
         } catch (e) {
           console.error('[Wallet.OS][view] Lỗi đọc dữ liệu:', e);
@@ -323,6 +328,7 @@
         viewLabel: viewLabel,
         isAdmin: function () { return !!window.__walletIsAdmin; },
         getError: function () { return viewErrorMsg; },
+        getNote: function () { return viewNote; },
         listUsers: async function () {
           var snap = await db.collection('userDirectory').orderBy('lastLogin', 'desc').limit(200).get();
           return snap.docs.map(function (d) { var v = d.data(); v.uid = d.id; return v; })
@@ -630,8 +636,12 @@
       banner.appendChild(b);
     }
 
+    function viewText(note) {
+      return '👁 Đang xem tài khoản: ' + (W.viewLabel || W.viewUid) + ' — CHỈ ĐỌC' + (note ? '  ·  ℹ ' + note : '');
+    }
     if (W.isViewMode) {
-      showBanner('👁 Đang xem tài khoản: ' + (W.viewLabel || W.viewUid) + ' — CHỈ ĐỌC');
+      showBanner(viewText(W.getNote()));
+      document.addEventListener('walletViewNote', function (e) { showBanner(viewText(e.detail)); });
       document.addEventListener('walletViewError', function (e) {
         showBanner('⚠ ' + e.detail + ' (đang KHÔNG hiển thị dữ liệu thật)', true);
       });
@@ -647,7 +657,20 @@
       head.appendChild(close);
       var search = el('input'); search.placeholder = 'Tìm theo tên hoặc email...';
       var list = el('div', 'wa-list');
-      panel.appendChild(head); panel.appendChild(search); panel.appendChild(list);
+      var uidRow = el('div');
+      uidRow.style.cssText = 'display:flex;gap:6px;margin:0 16px 8px';
+      var uidInput = el('input'); uidInput.placeholder = 'Hoặc dán UID (Authentication → User UID)';
+      uidInput.style.margin = '0'; uidInput.style.flex = '1';
+      var uidBtn = el('button', 'wa-item', 'Xem'); uidBtn.type = 'button';
+      uidBtn.style.cssText = 'width:auto;background:rgba(255,255,255,.1);font-weight:600';
+      uidBtn.addEventListener('click', function () {
+        var v = uidInput.value.trim();
+        if (!/^[A-Za-z0-9]{20,40}$/.test(v)) { toast('UID không hợp lệ'); return; }
+        W.enter(v, 'UID ' + v);
+      });
+      uidRow.appendChild(uidInput); uidRow.appendChild(uidBtn);
+      panel.appendChild(head); panel.appendChild(search); panel.appendChild(list); panel.appendChild(uidRow);
+      uidRow.style.margin = '8px 16px 14px';
       ov.appendChild(panel); document.body.appendChild(ov);
 
       function dismiss() { ov.remove(); }
