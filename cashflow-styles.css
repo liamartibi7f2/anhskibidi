@@ -3810,7 +3810,8 @@ body.perf-lite {
 :root body .hub-cf-overlay, :root body .cfg-overlay,
 :root body .hub-cf-bs-overlay, :root body .hub-cf-bs-backdrop, :root body .hub-cf-bs-panel,
 :root body .hub-cf-ai-key-modal, :root body .hub-cf-filter-popover,
-:root body .hub-cf-heatmap-picker, :root body [class*="hub-cf-heatmap-tooltip"], :root body .hub-cf-toast {
+:root body .hub-cf-heatmap-picker, :root body [class*="hub-cf-heatmap-tooltip"], :root body .hub-cf-toast,
+:root body .wa-notice, :root body .wa-live {
   --bg-deep: var(--cfk-bg);  --bg-surface: var(--cfk-surface);  --bg-elevated: var(--cfk-elevated);
   --glass-bg: var(--cfk-glass);  --glass-border: var(--cfk-line);  --glass-highlight: var(--cfk-hi);
   --accent-primary: var(--cfk-accent);  --primary: var(--cfk-accent);  --accent-secondary: var(--cfk-accent-2);
@@ -4981,3 +4982,122 @@ body.theme-optimized .st-bottomnav { background: #000; border-top-color: rgba(0,
 
 /* Toast chỉ để đọc, không được nuốt thao tác chạm của nút nằm bên dưới */
 .hub-cf-toast, #hub-cf-toast, .hub-toast { pointer-events: none; }
+
+/* ============================================================
+   18. ADMIN ACCESS NOTICE — thông báo admin đã truy cập / đang xem
+   Trượt từ phải sang trái ở góc dưới bên phải (namespace: wa-)
+   ============================================================ */
+.wa-stack {
+  position: fixed;
+  right: var(--space-md);
+  bottom: var(--space-lg);
+  z-index: 10001;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-sm);
+  max-width: calc(100vw - 2 * var(--space-md));
+  pointer-events: none;
+}
+
+.wa-notice,
+.wa-live {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-sizing: border-box;
+  max-width: 100%;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
+  border: 1px solid var(--accent-secondary);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-md), var(--shadow-glow);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  opacity: 0;
+  transform: translateX(calc(100% + var(--space-lg)));
+  transition: opacity 350ms var(--ease-out-expo), transform 350ms var(--ease-out-expo);
+}
+.wa-notice.is-in,
+.wa-live.is-in {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.wa-notice {
+  width: 320px;
+  padding: 12px 14px;
+  font-size: 0.78rem;
+  pointer-events: auto;
+}
+.wa-notice-icon { font-size: 1.1rem; line-height: 1; flex: 0 0 auto; }
+.wa-notice-text { flex: 1 1 auto; min-width: 0; }
+.wa-notice-title { color: var(--accent-primary); font-size: 0.8rem; margin-bottom: 2px; }
+.wa-notice-body { color: var(--text-secondary); font-weight: 500; line-height: 1.4; }
+.wa-notice-x {
+  flex: 0 0 auto;
+  background: none;
+  border: 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 4px;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-in-out);
+}
+.wa-notice-x:hover { color: var(--text-primary); }
+
+.wa-live {
+  padding: 8px 14px;
+  font-size: 0.72rem;
+  border-radius: var(--radius-full);
+  pointer-events: none;   /* chỉ để đọc, không chặn thao tác bên dưới */
+}
+.wa-live-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 60%, transparent);
+  animation: wa-pulse 1.8s ease-out infinite;
+}
+@keyframes wa-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 55%, transparent); }
+  70%  { box-shadow: 0 0 0 8px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+[data-theme="solar-zen"] .wa-notice,
+[data-theme="solar-zen"] .wa-live {
+  background: rgba(250, 250, 245, 0.94);
+  border-color: #008080;
+  color: #1a1a2e;
+}
+[data-theme="solar-zen"] .wa-notice-title { color: #008080; }
+
+[data-theme="ember-noir"] .wa-notice,
+[data-theme="ember-noir"] .wa-live {
+  border-radius: 8px;
+  border: 1px solid var(--ember-brass-line);
+  border-left: 4px solid var(--accent-primary);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 768px) {
+  /* Nằm trên thanh điều hướng dưới, giống toast */
+  .wa-stack {
+    right: 12px;
+    bottom: calc(92px + env(safe-area-inset-bottom));
+  }
+  .wa-notice { width: min(320px, calc(100vw - 24px)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wa-notice, .wa-live { transition: opacity 150ms linear; transform: none; }
+  .wa-live-dot { animation: none; }
+}

@@ -141,7 +141,9 @@
           auth.onAuthStateChanged(function (user) {
             currentUser = user || null;
             updateAuthUI(currentUser);
+            if (!currentUser) stopWatchingAccess();
             if (currentUser && db) {
+              watchAdminAccess(currentUser);
               // Có phải admin không? (document admins/{uid} do bạn tạo tay trong Console)
               db.collection('admins').doc(currentUser.uid).get().then(function (s) {
                 window.__walletIsAdmin = s.exists;
@@ -204,6 +206,7 @@
             if (currentUser) {
               if (confirm('Bạn có muốn đăng xuất khỏi tài khoản ' + (currentUser.email || '') + ' không?')) {
                 try { sessionStorage.removeItem('wallet_os_view_uid'); sessionStorage.removeItem('wallet_os_view_label'); } catch (e) {}
+                try { await window.WalletAdmin.stopPresence(); } catch (e) {}
                 await auth.signOut();
                 location.reload();
               }
@@ -283,7 +286,10 @@
 
       function exitView() {
         try { sessionStorage.removeItem(VIEW_KEY); sessionStorage.removeItem(VIEW_LABEL_KEY); } catch (e) {}
-        location.reload();
+        var went = false;
+        function go() { if (went) return; went = true; location.reload(); }
+        stopPresence().then(go, go);   // báo "admin đã rời" cho người dùng trước khi tải lại
+        setTimeout(go, 1200);
       }
 
       function viewError(msg) {
@@ -320,6 +326,90 @@
           action: 'view',
           at: firebase.firestore.FieldValue.serverTimestamp()
         }).catch(function (e) { console.warn('[Wallet.OS] Không ghi được nhật ký xem:', e); });
+        startPresence();
+      }
+
+      // ── B3. THÔNG BÁO TRUY CẬP CỦA ADMIN ──
+      // Tài liệu: users/{uid}/adminAccess/status
+      //   Admin ghi : adminUid, active, startedAt, heartbeat   (mỗi 30s khi đang xem)
+      //   Người dùng: chỉ đọc + tự ghi seenAt (đánh dấu đã thấy thông báo)
+      var BEAT_MS = 30000;      // chu kỳ heartbeat của admin
+      var STALE_MS = 75000;     // quá ngưỡng này không có nhịp mới = coi như admin đã rời
+      var presenceTimer = null, presenceUid = null;
+
+      function accessRef(uid) {
+        return db.collection('users').doc(uid).collection('adminAccess').doc('status');
+      }
+      function srvNow() { return firebase.firestore.FieldValue.serverTimestamp(); }
+
+      function beat() {
+        if (!presenceUid || document.visibilityState === 'hidden') return;
+        accessRef(presenceUid).set({ active: true, heartbeat: srvNow() }, { merge: true }).catch(function () {});
+      }
+      function startPresence() {
+        if (presenceTimer || !isViewMode || !db || !currentUser || !viewUid || viewUid === currentUser.uid) return;
+        presenceUid = viewUid;
+        accessRef(presenceUid).set({
+          adminUid: currentUser.uid, active: true, startedAt: srvNow(), heartbeat: srvNow()
+        }, { merge: true }).catch(function (e) { console.warn('[Wallet.OS] Không ghi được trạng thái xem:', e); });
+        presenceTimer = setInterval(beat, BEAT_MS);
+        document.addEventListener('visibilitychange', beat);
+        window.addEventListener('pagehide', function () { stopPresence(); });
+      }
+      function stopPresence() {
+        if (!presenceTimer || !presenceUid) return Promise.resolve();
+        clearInterval(presenceTimer); presenceTimer = null;
+        var uid = presenceUid; presenceUid = null;
+        document.removeEventListener('visibilitychange', beat);
+        return accessRef(uid).set({ active: false, heartbeat: srvNow() }, { merge: true }).catch(function () {});
+      }
+
+      // Phía người dùng: lắng nghe realtime xem admin có đang xem / đã xem chưa
+      var accessState = { notice: null, live: false };
+      var accessListeners = [];
+      var accessUnsub = null, accessTick = null;
+      function emitAccess(type, detail) {
+        if (type === 'notice') accessState.notice = detail;
+        if (type === 'live') accessState.live = !!detail;
+        accessListeners.forEach(function (fn) { try { fn(type, detail); } catch (e) {} });
+      }
+      function stopWatchingAccess() {
+        if (accessUnsub) { accessUnsub(); accessUnsub = null; }
+        if (accessTick) { clearInterval(accessTick); accessTick = null; }
+      }
+      function watchAdminAccess(user) {
+        if (isViewMode || !db || !user || accessUnsub) return;   // admin đang xem người khác thì không nhận thông báo
+        var ref = accessRef(user.uid);
+        var first = true, lastBeat = 0, lastBeatLocal = 0, adminActive = false, isLive = false;
+
+        function markSeen() { ref.update({ seenAt: srvNow() }).catch(function () {}); }
+        function evalLive() {
+          var live = adminActive && lastBeatLocal > 0 && (Date.now() - lastBeatLocal) < STALE_MS;
+          if (live === isLive) return;
+          isLive = live;
+          emitAccess('live', live);
+          markSeen();   // đã thấy trực tiếp / đã rời → không hiện lại "x giờ trước" cho lần này
+        }
+
+        accessUnsub = ref.onSnapshot(function (snap) {
+          if (!snap.exists) { adminActive = false; evalLive(); return; }
+          var d = snap.data({ serverTimestamps: 'estimate' }) || {};
+          var hb = d.heartbeat ? d.heartbeat.toMillis() : 0;
+          var seen = d.seenAt ? d.seenAt.toMillis() : 0;
+          adminActive = d.active === true;
+          // Dùng giờ nhận trên máy người dùng để không phụ thuộc lệch đồng hồ giữa 2 máy
+          if (hb && hb !== lastBeat) {
+            if (!first || (Date.now() - hb) < STALE_MS) lastBeatLocal = Date.now();
+            lastBeat = hb;
+          }
+          evalLive();
+          if (first) {
+            first = false;
+            // Mới đăng nhập/mở web: admin không còn xem mà có lượt chưa báo → hiện "đã xem lúc ..."
+            if (!isLive && hb && hb > seen) { emitAccess('notice', { at: hb }); markSeen(); }
+          }
+        }, function (err) { console.warn('[Wallet.OS] Không nghe được trạng thái admin:', err && err.code); });
+        accessTick = setInterval(evalLive, 15000);
       }
 
       window.WalletAdmin = {
@@ -333,6 +423,12 @@
           var snap = await db.collection('userDirectory').orderBy('lastLogin', 'desc').limit(200).get();
           return snap.docs.map(function (d) { var v = d.data(); v.uid = d.id; return v; })
             .filter(function (u) { return !currentUser || u.uid !== currentUser.uid; });
+        },
+        stopPresence: stopPresence,
+        subscribeAccess: function (fn) {
+          accessListeners.push(fn);
+          if (accessState.live) fn('live', true);
+          if (accessState.notice) fn('notice', accessState.notice);
         },
         enter: function (uid, label) {
           try { sessionStorage.setItem(VIEW_KEY, uid); sessionStorage.setItem(VIEW_LABEL_KEY, label || ''); } catch (e) {}
@@ -714,6 +810,135 @@
     document.addEventListener('walletAdminReady', mountAdminButton);
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountAdminButton);
     else mountAdminButton();
+  })();
+  </script>
+  <!-- 6. USER: thông báo "Admin đã truy cập / đang xem" (góc dưới bên phải) -->
+  <script>
+  (function () {
+    'use strict';
+    var W = window.WalletAdmin;
+    if (!W || !W.subscribeAccess) return;
+
+    var I18N = {
+      vi: {
+        noticeTitle: 'Admin đã truy cập',
+        noticeBody: 'Admin đã xem tài khoản của bạn {ago}.',
+        liveText: 'Admin đang xem quản lý chi tiêu của bạn',
+        close: 'Đóng',
+        justNow: 'vừa xong',
+        min: '{n} phút trước',
+        hour: '{n} giờ trước',
+        day: '{n} ngày trước'
+      },
+      en: {
+        noticeTitle: 'Admin accessed your account',
+        noticeBody: 'An admin viewed your account {ago}.',
+        liveText: 'Admin is viewing your expense tracker',
+        close: 'Close',
+        justNow: 'just now',
+        min: '{n} min ago',
+        hour: '{n} hr ago',
+        day: '{n} day(s) ago'
+      }
+    };
+    function lang() { return window.app.getLanguage() === 'en' ? 'en' : 'vi'; }
+    function t(key, params) {
+      var s = (I18N[lang()] || I18N.vi)[key] || key;
+      Object.keys(params || {}).forEach(function (k) { s = s.replace('{' + k + '}', params[k]); });
+      return s;
+    }
+    function ago(ms) {
+      var m = Math.floor((Date.now() - ms) / 60000);
+      if (m < 1) return t('justNow');
+      if (m < 60) return t('min', { n: m });
+      var h = Math.floor(m / 60);
+      if (h < 24) return t('hour', { n: h });
+      return t('day', { n: Math.floor(h / 24) });
+    }
+    function el(tag, cls, text) {
+      var n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (text != null) n.textContent = text;
+      return n;
+    }
+
+    var stack = null;
+    function getStack() {
+      if (!stack) {
+        stack = el('div', 'wa-stack');
+        document.body.appendChild(stack);
+      }
+      return stack;
+    }
+    function slideIn(node) {
+      getStack().appendChild(node);
+      requestAnimationFrame(function () { requestAnimationFrame(function () { node.classList.add('is-in'); }); });
+    }
+    function slideOut(node, after) {
+      node.classList.remove('is-in');
+      setTimeout(function () { node.remove(); if (after) after(); }, 420);   // dự phòng khi tắt hiệu ứng (Optimize)
+    }
+
+    // ---- Thông báo "đã xem lúc ..." (1 lần cho mỗi lượt admin xem) ----
+    var noticeEl = null, noticeAt = 0, noticeTimer = null;
+    function renderNotice() {
+      if (!noticeEl) return;
+      noticeEl.querySelector('.wa-notice-title').textContent = t('noticeTitle');
+      noticeEl.querySelector('.wa-notice-body').textContent = t('noticeBody', { ago: ago(noticeAt) });
+      noticeEl.querySelector('.wa-notice-x').setAttribute('aria-label', t('close'));
+    }
+    function showNotice(at) {
+      if (noticeEl) return;
+      noticeAt = at;
+      noticeEl = el('div', 'wa-notice');
+      noticeEl.setAttribute('role', 'status');
+      noticeEl.appendChild(el('span', 'wa-notice-icon', '👁'));
+      var txt = el('div', 'wa-notice-text');
+      txt.appendChild(el('div', 'wa-notice-title'));
+      txt.appendChild(el('div', 'wa-notice-body'));
+      noticeEl.appendChild(txt);
+      var x = el('button', 'wa-notice-x', '✕'); x.type = 'button';
+      noticeEl.appendChild(x);
+      function dismiss() {
+        clearTimeout(noticeTimer);
+        var n = noticeEl; noticeEl = null;
+        if (n) slideOut(n);
+      }
+      x.addEventListener('click', dismiss);
+      noticeEl.addEventListener('mouseenter', function () { clearTimeout(noticeTimer); });
+      noticeEl.addEventListener('mouseleave', function () { noticeTimer = setTimeout(dismiss, 4000); });
+      renderNotice();
+      slideIn(noticeEl);
+      noticeTimer = setTimeout(dismiss, 9000);
+    }
+
+    // ---- Trạng thái "Admin đang xem..." (hiện suốt lúc admin còn xem) ----
+    var liveEl = null;
+    function renderLive() {
+      if (liveEl) liveEl.querySelector('.wa-live-text').textContent = t('liveText');
+    }
+    function setLive(on) {
+      if (on && !liveEl) {
+        liveEl = el('div', 'wa-live');
+        liveEl.setAttribute('role', 'status');
+        liveEl.setAttribute('aria-live', 'polite');
+        liveEl.appendChild(el('span', 'wa-live-dot'));
+        liveEl.appendChild(el('span', 'wa-live-text'));
+        renderLive();
+        slideIn(liveEl);
+      } else if (!on && liveEl) {
+        var n = liveEl; liveEl = null;
+        slideOut(n);
+      }
+    }
+
+    W.subscribeAccess(function (type, detail) {
+      if (type === 'live') setLive(detail);
+      else if (type === 'notice') showNotice(detail.at);
+    });
+
+    // Đổi ngôn ngữ → cập nhật chữ ngay
+    window.addEventListener('hubLanguageChanged', function () { renderNotice(); renderLive(); });
   })();
   </script>
 </body>
