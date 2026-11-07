@@ -318,6 +318,7 @@ const cashflowModule = (function () {
       transferSwap:        'Swap direction',
       transferHint:        'Moves money between your own wallets. It is not income or expense.',
       transferSame:        'Pick two different wallets.',
+      transferLow:         'Only {n} left in {wallet} — you can still save.',
       cfqTransfer:         'Transfer',
       legDepositWallet:    '🐷 Transfer to savings',
       legDepositPool:      '🐷 Savings deposit (fund side)',
@@ -610,6 +611,7 @@ const cashflowModule = (function () {
       transferSwap:        'Đổi chiều',
       transferHint:        'Chuyển tiền giữa các ví của bạn. Không tính là thu nhập hay chi phí.',
       transferSame:        'Hãy chọn hai ví khác nhau.',
+      transferLow:         'Ví {wallet} chỉ còn {n} — vẫn có thể lưu.',
       cfqTransfer:         'Chuyển ví',
       legDepositWallet:    '🐷 Chuyển vào tiết kiệm',
       legDepositPool:      '🐷 Nhận vào quỹ tiết kiệm',
@@ -3349,37 +3351,7 @@ function _restoreAIState() {
   }
 }
 
-/* ============================================================
-   TRANSFERS — chuyển ví (không phải thu/chi)
-   ============================================================ */
-.hub-cf-tab-dot--transfer { background: var(--info, #00bcd4); }
-
-.hub-cf-transfer-row { display: flex; align-items: flex-end; gap: 8px; }
-.hub-cf-transfer-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-.hub-cf-transfer-swap {
-  flex-shrink: 0; width: 40px; height: 40px; padding: 0;
-  border: 1px solid color-mix(in srgb, var(--text-muted) 30%, transparent);
-  border-radius: var(--radius-sm, 6px); background: transparent;
-  color: var(--text-muted); font-size: 1.05rem; line-height: 1; cursor: pointer;
-  transition: color 160ms, border-color 160ms, background 160ms;
-}
-.hub-cf-transfer-swap:hover { color: var(--info, #00bcd4); border-color: var(--info, #00bcd4); background: color-mix(in srgb, var(--info, #00bcd4) 10%, transparent); }
-.hub-cf-transfer-swap:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
-.hub-cf-form-hint.is-error { color: var(--danger, #ff5252); }
-
-.hub-cf-tx-transfer td:nth-child(4) { color: var(--info, #00bcd4); }
-.hub-cf-tx-transfer.hub-cf-tx-legacyleg td:nth-child(4) { color: var(--text-muted); }
-.hub-cf-transfer-route {
-  display: inline-flex; align-items: center; gap: 3px; margin-left: 6px;
-  font-size: 0.72rem; color: var(--text-muted); white-space: nowrap;
-}
-
-.cfq-type.is-transfer {
-  color: var(--info, #00bcd4);
-  background: color-mix(in srgb, var(--info, #00bcd4) 16%, transparent);
-  border-color: color-mix(in srgb, var(--info, #00bcd4) 45%, transparent);
-}
-.cfq-arrow { color: var(--text-muted); }
+/* TRANSFERS (chuyển ví) → đã chuyển sang cashflow-styles.css, mục "TRANSFERS" */
 `;
         document.head.appendChild(styleEl);
       }
@@ -6917,6 +6889,8 @@ ${_aiShellHTML()}
       var el = _qs(sel);
       if (el) el.addEventListener('change', _updateTransferHint);
     });
+    var _xferAmt = _qs('#hub-cf-amount');
+    if (_xferAmt) _xferAmt.addEventListener('input', function () { if (_activeTab === 'transfer') _updateTransferHint(); });
     var swapBtn = _qs('#hub-cf-transfer-swap');
     if (swapBtn) {
       swapBtn.addEventListener('click', function () {
@@ -7059,9 +7033,13 @@ ${_aiShellHTML()}
     if (!on) return;
     var from = null, to = null;
     if (resetDefaults && !window.isEditingTransactionMode) {
+      // Mở form mới: form.reset() đã đưa cả hai ô về "Bank" → phải chọn lại tường minh.
+      // Ưu tiên cặp ví dùng lần trước (nếu hợp lệ), mặc định Bank → Savings.
+      from = 'bank'; to = 'savings';
       try {
         var last = (localStorage.getItem('hub_cf_last_transfer') || '').split('>');
-        if (last.length === 2) { from = last[0]; to = last[1]; }
+        if (last.length === 2 && last[0] !== last[1] &&
+            TRANSFER_WALLETS.indexOf(last[0]) >= 0 && TRANSFER_WALLETS.indexOf(last[1]) >= 0) { from = last[0]; to = last[1]; }
       } catch (e) {}
     }
     _refreshTransferSelects(from, to);
@@ -7079,15 +7057,41 @@ ${_aiShellHTML()}
     f.innerHTML = opts; t.innerHTML = opts;
     f.value = list.indexOf(curF) >= 0 ? curF : 'bank';
     t.value = list.indexOf(curT) >= 0 ? curT : 'savings';
+    // Hai ô không bao giờ được tự trùng nhau (trừ khi đang sửa đúng dữ liệu cũ bị trùng)
+    if (f.value === t.value && !(fromVal && toVal)) {
+      t.value = (f.value === 'savings') ? 'bank' : 'savings';
+    }
     _updateTransferHint();
+  }
+
+  /** Số dư khả dụng của ví nguồn (khi sửa lệnh chuyển: cộng lại phần lệnh này đã trừ) */
+  function _transferAvailable(wallet) {
+    var bal = wallet === 'bank' ? _calcBankBalance()
+            : wallet === 'cash' ? _calcCashBalance()
+            : wallet === 'savings' ? _calcSavingsBalance() : null;
+    if (bal === null) return null;
+    if (_editingTxId && _data && Array.isArray(_data.transactions)) {
+      var old = _data.transactions.find(function (x) { return x.id === _editingTxId; });
+      if (old && old.type === 'transfer') {
+        if (old.from === wallet) bal += Number(old.amount) || 0;
+        if (old.to === wallet)   bal -= Number(old.amount) || 0;
+      }
+    }
+    return bal;
   }
 
   function _updateTransferHint() {
     var f = _qs('#hub-cf-from'), t = _qs('#hub-cf-to'), h = _qs('#hub-cf-transfer-hint');
     if (!f || !t || !h) return;
     var same = f.value === t.value;
+    var amtEl = _qs('#hub-cf-amount'), amt = amtEl ? (parseInt(amtEl.value, 10) || 0) : 0;
+    var avail = (!same && amt > 0) ? _transferAvailable(f.value) : null;
+    var low = avail !== null && amt > avail;
     h.classList.toggle('is-error', same);
-    h.textContent = same ? _t('transferSame') : _transferRouteLabel(f.value, t.value) + ' · ' + _t('transferHint');
+    h.classList.toggle('is-warn', !same && low);
+    if (same) h.textContent = _t('transferSame');
+    else if (low) h.textContent = _t('transferLow').replace('{wallet}', _walletLabel(f.value)).replace('{n}', _formatVNFull(avail));
+    else h.textContent = _transferRouteLabel(f.value, t.value) + ' · ' + _t('transferHint');
   }
 
   function _openModal() {

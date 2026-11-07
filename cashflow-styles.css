@@ -5101,3 +5101,56 @@ body.theme-optimized .st-bottomnav { background: #000; border-top-color: rgba(0,
   .wa-notice, .wa-live { transition: opacity 150ms linear; transform: none; }
   .wa-live-dot { animation: none; }
 }
+
+/* ============================================================
+   TRANSFERS — chuyển ví (không phải thu/chi)
+   Đồng bộ từ khối CSS từng nằm trong cashflow.js · JS: _applyTransferMode / _refreshTransferSelects / _updateTransferHint
+   ============================================================ */
+.hub-cf-tab-dot--transfer { background: var(--info, #00bcd4); }
+
+.hub-cf-transfer-row { display: flex; align-items: flex-end; gap: 8px; }
+.hub-cf-transfer-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.hub-cf-transfer-swap {
+  flex-shrink: 0; width: 40px; height: 40px; padding: 0;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 30%, transparent);
+  border-radius: var(--radius-sm, 6px); background: transparent;
+  color: var(--text-muted); font-size: 1.05rem; line-height: 1; cursor: pointer;
+  transition: color 160ms, border-color 160ms, background 160ms;
+}
+.hub-cf-transfer-swap:hover { color: var(--info, #00bcd4); border-color: var(--info, #00bcd4); background: color-mix(in srgb, var(--info, #00bcd4) 10%, transparent); }
+.hub-cf-transfer-swap:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.hub-cf-form-hint.is-error { color: var(--danger, #ff5252); }
+
+.hub-cf-tx-transfer td:nth-child(4) { color: var(--info, #00bcd4); }
+.hub-cf-tx-transfer.hub-cf-tx-legacyleg td:nth-child(4) { color: var(--text-muted); }
+.hub-cf-transfer-route {
+  display: inline-flex; align-items: center; gap: 3px; margin-left: 6px;
+  font-size: 0.72rem; color: var(--text-muted); white-space: nowrap;
+}
+
+.cfq-type.is-transfer {
+  color: var(--info, #00bcd4);
+  background: color-mix(in srgb, var(--info, #00bcd4) 16%, transparent);
+  border-color: color-mix(in srgb, var(--info, #00bcd4) 45%, transparent);
+}
+.cfq-arrow { color: var(--text-muted); }
+.hub-cf-form-hint.is-warn { color: var(--warning, #ffb020); }
+
+/* ── Đầu modal Thêm/Sửa giao dịch: 3 tab (Chi phí · Thu nhập · Chuyển ví) không còn tràn khung ──
+   Hàng 1 = tiêu đề + nút đóng · Hàng 2 = công tắc 3 tab chia đều. Áp dụng ở MỌI độ rộng. */
+.hub-cf-modal { overflow-x: hidden; }
+:root body #hub-cf-overlay .hub-cf-modal-header { flex-wrap: wrap; align-items: center; gap: 12px 10px; }
+:root body #hub-cf-overlay .hub-cf-modal-title  { order: 1; flex: 1 1 0; min-width: 0; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:root body #hub-cf-overlay .hub-cf-modal-close  { order: 2; flex: 0 0 auto; }
+:root body #hub-cf-overlay .hub-cf-tab-group    { order: 3; flex: 1 1 100%; min-width: 0; }
+:root body #hub-cf-overlay .hub-cf-tab          { flex: 1 1 auto; min-width: 0; justify-content: center; white-space: nowrap; padding-left: 8px; padding-right: 8px; }
+@media (max-width: 480px) {
+  :root body #hub-cf-overlay .hub-cf-tab { font-size: 0.74rem; letter-spacing: 0.02em; gap: 5px; padding-left: 6px; padding-right: 6px; }
+}
+@media (max-width: 360px) {
+  :root body #hub-cf-overlay .hub-cf-tab { font-size: 0.66rem; letter-spacing: 0; gap: 4px; padding-left: 4px; padding-right: 4px; }
+}
+
+/* Chọn ví Từ → Đến: đủ chỗ cho tên ví trên màn hình hẹp */
+.hub-cf-transfer-col .hub-cf-form-input { padding-left: 10px; padding-right: 6px; text-overflow: ellipsis; }
+.hub-cf-transfer-swap { width: 38px; }
