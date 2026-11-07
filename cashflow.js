@@ -308,6 +308,22 @@ const cashflowModule = (function () {
       modalTitleEdit:      'Edit Transaction',
       tabExpense:          'Expense',
       tabIncome:           'Income',
+      tabTransfer:         'Transfer',
+      labelFrom:           'From',
+      labelTo:             'To',
+      walletBank:          'Bank',
+      walletCash:          'Cash',
+      walletSavings:       'Savings',
+      walletUncategorized: 'Uncategorized',
+      transferSwap:        'Swap direction',
+      transferHint:        'Moves money between your own wallets. It is not income or expense.',
+      transferSame:        'Pick two different wallets.',
+      cfqTransfer:         'Transfer',
+      legDepositWallet:    '🐷 Transfer to savings',
+      legDepositPool:      '🐷 Savings deposit (fund side)',
+      legWithdrawWallet:   '🐷 Withdraw from savings',
+      legWithdrawPool:     '🐷 Savings withdrawal (fund side)',
+      migrationDone:       'Merged {n} savings entries into single transfers',
       labelAmount:         'Amount (VND)',
       labelDate:           'Date',
       labelDesc:           'Description',
@@ -584,6 +600,22 @@ const cashflowModule = (function () {
       modalTitleEdit:      'Sửa Giao Dịch',
       tabExpense:          'Chi Phí',
       tabIncome:           'Thu Nhập',
+      tabTransfer:         'Chuyển ví',
+      labelFrom:           'Từ ví',
+      labelTo:             'Đến ví',
+      walletBank:          'Ngân hàng',
+      walletCash:          'Tiền mặt',
+      walletSavings:       'Tiết kiệm',
+      walletUncategorized: 'Chưa phân loại',
+      transferSwap:        'Đổi chiều',
+      transferHint:        'Chuyển tiền giữa các ví của bạn. Không tính là thu nhập hay chi phí.',
+      transferSame:        'Hãy chọn hai ví khác nhau.',
+      cfqTransfer:         'Chuyển ví',
+      legDepositWallet:    '🐷 Chuyển vào tiết kiệm',
+      legDepositPool:      '🐷 Nhận vào quỹ tiết kiệm',
+      legWithdrawWallet:   '🐷 Rút từ tiết kiệm',
+      legWithdrawPool:     '🐷 Rút khỏi quỹ tiết kiệm',
+      migrationDone:       'Đã gộp {n} giao dịch tiết kiệm thành các lệnh chuyển ví',
       labelAmount:         'Số tiền (VND)',
       labelDate:           'Ngày',
       labelDesc:           'Mô tả',
@@ -1059,6 +1091,15 @@ const cashflowModule = (function () {
       console.warn('[CashFlow]    Auto-save is DISABLED until user performs a write action.');
     }
 
+    // ── Migration vừa gộp giao dịch → lưu lại + báo cho người dùng ──
+    if (_migrationPending && !_isOfflineMode) {
+      _migrationPending = false;
+      _glBackup();
+      _debouncedPersist();
+      var _mc = _migrationCount; _migrationCount = 0;
+      setTimeout(function () { _showToast(_t('migrationDone').replace('{n}', _mc)); }, 600);
+    }
+
     _sessionLoaded = true;
     console.log('[CashFlow] Data loaded successfully. Meta:', _cashFlowMeta);
   }
@@ -1161,6 +1202,7 @@ const cashflowModule = (function () {
     var changed = 0;
     txs.forEach(function (tx) {
       if (!tx || typeof tx.category !== 'string' || !tx.category) return;
+      if (tx.type === 'transfer') return;
       var raw = tx.category;
       if (raw === 'thu-no' || raw === 'Thu nợ' || raw === 'cho-vay') return;  // thu hồi nợ / cho vay: giữ nguyên (logic riêng)
       var lookup = tx.type === 'income' ? _catLookupIncome : _catLookupExpense;
@@ -1186,11 +1228,15 @@ const cashflowModule = (function () {
 
     // 🔑 BACKWARD COMPATIBILITY: Default missing source to 'uncategorized'
     _data.transactions.forEach(function (tx) {
+      if (tx.type === 'transfer') return;   // chuyển ví không có `source`
       if (!tx.source) tx.source = 'uncategorized';
     });
 
     // 🔑 Đưa nhãn danh mục cũ / từ Excel về đúng mã (không xoá gì, nhãn lạ giữ nguyên)
     _normalizeCategories(_data.transactions);
+
+    // 🔑 Gộp cặp "hai chân" tiết kiệm kiểu cũ thành một lệnh chuyển ví (idempotent)
+    _migrateSavingsLegs();
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -1200,6 +1246,206 @@ const cashflowModule = (function () {
   /** Khoản chi "Cho vay": tiền rời ví nhưng vẫn là tài sản (khoản phải thu) → không tính là chi tiêu thật */
   function _isLoanOut(tx) {
     return !!tx && tx.type === 'expense' && tx.category === 'cho-vay';
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // TRANSFER ENGINE — chuyển tiền giữa các ví của chính mình
+  // ══════════════════════════════════════════════════════════════
+  // Một giao dịch: { id, type: 'transfer', amount, from, to, year, month, day, desc,
+  //                  category: 'chuyen-vi', goalId?, legacyLegs?, createdAt }
+  // - KHÔNG phải thu nhập, KHÔNG phải chi phí → mọi tổng thu/chi chỉ đọc type income/expense
+  //   nên không cần nhớ "loại trừ chuyển tiết kiệm" ở từng nơi nữa.
+  // - Chỉ làm thay đổi số dư ví: ví `from` giảm, ví `to` tăng (xem _transferDelta).
+  // - Không có trường `source` → các vòng lặp cộng theo `source` tự bỏ qua.
+  var TRANSFER_CATEGORY = { id: 'chuyen-vi', name: '🔁 Transfer', nameVI: '🔁 Chuyển ví' };
+  var TRANSFER_WALLETS  = ['bank', 'cash', 'savings'];
+  var TRANSFER_BACKUP_KEY = 'hub_cf_premigration_savings_v1';
+  var _migrationPending = false;
+  var _migrationCount   = 0;
+
+  function _isTransfer(tx) { return !!tx && tx.type === 'transfer'; }
+
+  /** Giao dịch kiểu cũ (một "chân" của cặp chuyển tiết kiệm) */
+  function _isLegacySavingsLeg(tx) {
+    return !!tx && (tx.type === 'income' || tx.type === 'expense') &&
+      (tx.category === 'tiet-kiem' || tx.category === 'Tiết kiệm' || tx.category === '🐷 Tiết kiệm');
+  }
+
+  function _walletIcon(w) {
+    return w === 'bank' ? '🏦' : (w === 'cash' ? '💵' : (w === 'savings' ? '🐷' : '❓'));
+  }
+  function _walletLabel(w) {
+    var key = w === 'bank' ? 'walletBank' : (w === 'cash' ? 'walletCash' : (w === 'savings' ? 'walletSavings' : 'walletUncategorized'));
+    return _t(key);
+  }
+  function _transferRouteLabel(from, to) {
+    return _walletIcon(from) + ' ' + _walletLabel(from) + ' → ' + _walletIcon(to) + ' ' + _walletLabel(to);
+  }
+  function _transferRouteText(tx) { return _transferRouteLabel(tx.from, tx.to); }
+
+  /** Nhãn rõ nghĩa cho "chân" cũ (nhãn cũ của chân thu bị đọc ngược thành "Rút từ tiết kiệm") */
+  function _legacyLegLabel(tx) {
+    var pool = tx.source === 'savings';
+    if (tx.type === 'expense') return _t(pool ? 'legWithdrawPool' : 'legDepositWallet');
+    return _t(pool ? 'legDepositPool' : 'legWithdrawWallet');
+  }
+
+  /** Tổng thay đổi số dư của một ví do các lệnh chuyển ví */
+  function _transferDelta(wallet) {
+    var sum = 0;
+    if (!_data || !_data.transactions) return 0;
+    _data.transactions.forEach(function (tx) {
+      if (!_isTransfer(tx)) return;
+      var amt = Number(tx.amount) || 0;
+      if (tx.to === wallet) sum += amt;
+      if (tx.from === wallet) sum -= amt;
+    });
+    return sum;
+  }
+
+  function _getMonthTransfers(year, month) {
+    if (!_data || !_data.transactions) return [];
+    return _data.transactions.filter(function (tx) {
+      return _isTransfer(tx) && tx.year === year && tx.month === month;
+    });
+  }
+
+  /** Ghi một lệnh chuyển ví. o = { amount, from, to, iso | (y,m,d), desc, goalId } */
+  function _createTransfer(o) {
+    var p = String(o.iso || _todayISO()).split('-');
+    var tx = {
+      id: _uid(), type: 'transfer', amount: Math.round(Number(o.amount) || 0),
+      year: +p[0], month: +p[1], day: +p[2], desc: o.desc || '',
+      category: TRANSFER_CATEGORY.id, from: o.from, to: o.to, createdAt: Date.now()
+    };
+    if (o.goalId) tx.goalId = o.goalId;
+    _data.transactions.push(tx);
+    if (_isOfflineMode) { _isOfflineMode = false; }
+    return tx;
+  }
+
+  /** Giữ mục tiêu tiết kiệm khớp khi sửa một lệnh chuyển ví gắn với mục tiêu */
+  function _glSyncFromTransfer(tx) {
+    if (!tx || !tx.goalId) return;
+    var g = _glFind(tx.goalId); if (!g) return;
+    var c = (g.contribs || []).find(function (x) { return Array.isArray(x.txIds) && x.txIds.indexOf(tx.id) !== -1; });
+    if (!c) return;
+    if (tx.from === 'savings' || tx.to === 'savings') {
+      var deposit = tx.to === 'savings';
+      var other = deposit ? tx.from : tx.to;
+      c.amount = (deposit ? 1 : -1) * (Number(tx.amount) || 0);
+      c.date = tx.year + '-' + String(tx.month).padStart(2, '0') + '-' + String(tx.day).padStart(2, '0');
+      c.wallet = other === 'cash' ? 'cash' : 'bank';
+    } else {
+      // không còn liên quan tới quỹ tiết kiệm → tách khỏi mục tiêu
+      g.contribs.splice(g.contribs.indexOf(c), 1);
+      delete tx.goalId;
+    }
+    _glRecheckStatus(g);
+    _glBackup();
+  }
+
+  /** Xóa lệnh chuyển ví gắn mục tiêu → gỡ luôn khoản nạp/rút tương ứng của mục tiêu */
+  function _glUnlinkTransfer(tx) {
+    if (!tx || !tx.goalId) return;
+    var g = _glFind(tx.goalId); if (!g) return;
+    var i = (g.contribs || []).findIndex(function (x) { return Array.isArray(x.txIds) && x.txIds.indexOf(tx.id) !== -1; });
+    if (i === -1) return;
+    g.contribs.splice(i, 1);
+    _glRecheckStatus(g);
+    _glBackup();
+  }
+
+  /**
+   * MIGRATION: ghép cặp "hai chân" cũ thành một lệnh chuyển ví.
+   * Cặp hợp lệ: cùng số tiền + cùng ngày, một chân thuộc quỹ tiết kiệm (source 'savings'),
+   * một chân thuộc ví khác, hai chân đối lập thu/chi, cả hai category tiết kiệm,
+   * và (nếu có) cùng mục tiêu. Số dư từng ví trước/sau khi ghép KHÔNG đổi.
+   * Chân không ghép được giữ nguyên (vẫn chạy theo quy tắc loại trừ cũ). Chạy lại nhiều lần vẫn an toàn.
+   * @returns {number} số cặp đã gộp
+   */
+  function _migrateSavingsLegs() {
+    if (!_data || !Array.isArray(_data.transactions)) return 0;
+    var wallets = [], pools = [];
+    _data.transactions.forEach(function (tx) {
+      if (!_isLegacySavingsLeg(tx)) return;
+      if (!tx.id) tx.id = _uid();
+      (tx.source === 'savings' ? pools : wallets).push(tx);
+    });
+    if (!wallets.length || !pools.length) return 0;
+
+    function key(tx) { return (Number(tx.amount) || 0) + '|' + tx.year + '|' + tx.month + '|' + tx.day; }
+    var poolsByKey = {};
+    pools.forEach(function (p) { (poolsByKey[key(p)] = poolsByKey[key(p)] || []).push(p); });
+
+    var used = {}, pairs = [];
+    wallets.slice().sort(function (a, b) { return (a.createdAt || 0) - (b.createdAt || 0); }).forEach(function (w) {
+      if (!(Number(w.amount) > 0)) return;
+      var cands = (poolsByKey[key(w)] || []).filter(function (p) {
+        if (used[p.id]) return false;
+        if (p.type === w.type) return false;
+        if (w.goalId && p.goalId && w.goalId !== p.goalId) return false;
+        return true;
+      });
+      if (!cands.length) return;
+      cands.sort(function (a, b) {
+        var ga = (w.goalId && a.goalId === w.goalId) ? 0 : 1, gb = (w.goalId && b.goalId === w.goalId) ? 0 : 1;
+        if (ga !== gb) return ga - gb;
+        return Math.abs((a.createdAt || 0) - (w.createdAt || 0)) - Math.abs((b.createdAt || 0) - (w.createdAt || 0));
+      });
+      var p = cands[0];
+      used[w.id] = true; used[p.id] = true;
+      pairs.push({ w: w, p: p });
+    });
+    if (!pairs.length) return 0;
+
+    // Bản sao dự phòng trên máy (chỉ các chân bị gộp) — để khôi phục nếu cần
+    try {
+      var prev = JSON.parse(localStorage.getItem(TRANSFER_BACKUP_KEY) || '[]');
+      if (!Array.isArray(prev)) prev = [];
+      pairs.forEach(function (pr) { prev.push(pr.w, pr.p); });
+      localStorage.setItem(TRANSFER_BACKUP_KEY, JSON.stringify(prev));
+    } catch (_) {}
+
+    var idMap = {}, created = [];
+    pairs.forEach(function (pr) {
+      var w = pr.w, p = pr.p, deposit = w.type === 'expense';
+      var created0 = Math.min(w.createdAt || Infinity, p.createdAt || Infinity);
+      var t = {
+        id: _uid(), type: 'transfer', amount: Number(w.amount) || 0,
+        year: w.year, month: w.month, day: w.day,
+        desc: w.desc || p.desc || '',
+        category: TRANSFER_CATEGORY.id,
+        from: deposit ? (w.source || 'uncategorized') : 'savings',
+        to:   deposit ? 'savings' : (w.source || 'uncategorized'),
+        createdAt: isFinite(created0) ? created0 : Date.now(),
+        legacyLegs: [Object.assign({}, w), Object.assign({}, p)]
+      };
+      var gid = w.goalId || p.goalId;
+      if (gid) t.goalId = gid;
+      idMap[w.id] = t.id; idMap[p.id] = t.id;
+      created.push(t);
+    });
+
+    _data.transactions = _data.transactions.filter(function (tx) { return !idMap[tx.id]; }).concat(created);
+
+    // mục tiêu tiết kiệm: thay id hai chân bằng id lệnh chuyển ví
+    _glEnsure().forEach(function (g) {
+      (g.contribs || []).forEach(function (c) {
+        if (!Array.isArray(c.txIds) || !c.txIds.length) return;
+        var seen = {}, next = [];
+        c.txIds.forEach(function (id) {
+          var nid = idMap[id] || id;
+          if (!seen[nid]) { seen[nid] = true; next.push(nid); }
+        });
+        c.txIds = next;
+      });
+    });
+
+    _migrationPending = true;
+    _migrationCount += created.length;
+    try { console.log('[CashFlow] Merged ' + created.length + ' savings leg pairs into transfers.'); } catch (_) {}
+    return created.length;
   }
 
   /** Tính tiền lãi: type 'pct' (% trên gốc) hoặc 'fixed' (số tiền cố định) */
@@ -1343,21 +1589,27 @@ const cashflowModule = (function () {
           e.preventDefault();
           if (el.tagName.toLowerCase() === 'button') {
             el.click();
-          } else if (index < focusable.length - 1) {
-            focusable[index + 1].focus();
+          } else {
+            var _live = focusable.filter(function (x) { return x.offsetParent !== null && !x.disabled; });
+            var _li = _live.indexOf(el);
+            if (_li > -1 && _li < _live.length - 1) _live[_li + 1].focus();
           }
         }
 
         // 4. ARROW DOWN: Jump next
         if (e.key === 'ArrowDown' && !isSelect && !isDate) {
           e.preventDefault();
-          if (index < focusable.length - 1) focusable[index + 1].focus();
+          var _liveD = focusable.filter(function (x) { return x.offsetParent !== null && !x.disabled; });
+          var _liD = _liveD.indexOf(el);
+          if (_liD > -1 && _liD < _liveD.length - 1) _liveD[_liD + 1].focus();
         }
 
         // 5. ARROW UP: Jump previous
         if (e.key === 'ArrowUp' && !isSelect && !isDate) {
           e.preventDefault();
-          if (index > 0) focusable[index - 1].focus();
+          var _liveU = focusable.filter(function (x) { return x.offsetParent !== null && !x.disabled; });
+          var _liU = _liveU.indexOf(el);
+          if (_liU > 0) _liveU[_liU - 1].focus();
         }
       });
     });
@@ -1445,6 +1697,15 @@ const cashflowModule = (function () {
 
   /** Get transactions for a specific month */
   function _getMonthTransactions(year, month) {
+    // Chỉ thu/chi. Lệnh chuyển ví KHÔNG nằm ở đây → mọi tổng thu/chi tự đúng.
+    if (!_data || !_data.transactions) return [];
+    return _data.transactions.filter(function (tx) {
+      return tx.type !== 'transfer' && tx.year === year && tx.month === month;
+    });
+  }
+
+  /** Dành riêng cho Sổ giao dịch: thu + chi + chuyển ví */
+  function _getMonthLedgerTransactions(year, month) {
     if (!_data || !_data.transactions) return [];
     return _data.transactions.filter(function (tx) {
       return tx.year === year && tx.month === month;
@@ -1458,7 +1719,7 @@ const cashflowModule = (function () {
    * ═══════════════════════════════════════════════════════════════ */
   function _getFilteredAndSortedTransactions() {
     // 1. Get fresh copy of current month's transactions (no mutation)
-    var txs = _getMonthTransactions(_currentMonth.year, _currentMonth.month).slice();
+    var txs = _getMonthLedgerTransactions(_currentMonth.year, _currentMonth.month).slice();
 
     // 2. Apply Date Filter
     var from = _txTableState.date.from;
@@ -1534,7 +1795,7 @@ const cashflowModule = (function () {
   /** Get ALL transactions sorted by date descending */
   function _getAllTransactionsSorted() {
     if (!_data || !_data.transactions) return [];
-    return _data.transactions.slice().sort(function (a, b) {
+    return _data.transactions.filter(function (tx) { return tx.type !== 'transfer'; }).sort(function (a, b) {
       if (a.year !== b.year) return b.year - a.year;
       if (a.month !== b.month) return b.month - a.month;
       return (b.day || 0) - (a.day || 0);
@@ -1571,6 +1832,7 @@ const cashflowModule = (function () {
     let totalExpense = 0;
     if (_data && _data.transactions) {
       _data.transactions.forEach(function (tx) {
+        if (tx.type === 'transfer') return;
         if (tx.type === 'income') totalIncome += (tx.amount || 0);
         else totalExpense += (tx.amount || 0);
       });
@@ -1630,6 +1892,7 @@ var _SYSTEM_CATEGORY_NAMES = {
   }
 
   function _lookupCategory(catId, type) {
+    if (catId === TRANSFER_CATEGORY.id) return TRANSFER_CATEGORY;
     const list = type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
     var found = list.find(function (c) { return c.id === catId; });
     if (found) return found;
@@ -1659,7 +1922,7 @@ var _SYSTEM_CATEGORY_NAMES = {
     });
     // Add initial balance offset from meta (synced via Firestore)
     var initCash = _cashFlowMeta.initCash || 0;
-    return cashIncome - cashExpense + initCash;
+    return cashIncome - cashExpense + initCash + _transferDelta('cash');
   }
 
   /** Calculate running bank balance (all-time) */
@@ -1674,7 +1937,7 @@ var _SYSTEM_CATEGORY_NAMES = {
     });
     // Add initial balance offset from meta (synced via Firestore)
     var initBank = _cashFlowMeta.initBank || 0;
-    return bankIncome - bankExpense + initBank;
+    return bankIncome - bankExpense + initBank + _transferDelta('bank');
   }
 
   /** Calculate running uncategorized balance (all-time) — NEW */
@@ -1687,7 +1950,7 @@ var _SYSTEM_CATEGORY_NAMES = {
       if (tx.type === 'income') uncategorizedIncome += (tx.amount || 0);
       else uncategorizedExpense += (tx.amount || 0);
     });
-    return uncategorizedIncome - uncategorizedExpense;
+    return uncategorizedIncome - uncategorizedExpense + _transferDelta('uncategorized');
   }
 
   /** Calculate running savings balance (all-time) from transactions */
@@ -1702,7 +1965,7 @@ var _SYSTEM_CATEGORY_NAMES = {
     });
     // Add initial balance offset from meta (synced via Firestore)
     var initSavings = _cashFlowMeta.savingsBalance || 0;
-    return savingsIncome - savingsExpense + initSavings;
+    return savingsIncome - savingsExpense + initSavings + _transferDelta('savings');
   }
 
   /** Calculate monthly cash flow for chart */
@@ -3085,6 +3348,38 @@ function _restoreAIState() {
     height: 12px;
   }
 }
+
+/* ============================================================
+   TRANSFERS — chuyển ví (không phải thu/chi)
+   ============================================================ */
+.hub-cf-tab-dot--transfer { background: var(--info, #00bcd4); }
+
+.hub-cf-transfer-row { display: flex; align-items: flex-end; gap: 8px; }
+.hub-cf-transfer-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.hub-cf-transfer-swap {
+  flex-shrink: 0; width: 40px; height: 40px; padding: 0;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 30%, transparent);
+  border-radius: var(--radius-sm, 6px); background: transparent;
+  color: var(--text-muted); font-size: 1.05rem; line-height: 1; cursor: pointer;
+  transition: color 160ms, border-color 160ms, background 160ms;
+}
+.hub-cf-transfer-swap:hover { color: var(--info, #00bcd4); border-color: var(--info, #00bcd4); background: color-mix(in srgb, var(--info, #00bcd4) 10%, transparent); }
+.hub-cf-transfer-swap:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.hub-cf-form-hint.is-error { color: var(--danger, #ff5252); }
+
+.hub-cf-tx-transfer td:nth-child(4) { color: var(--info, #00bcd4); }
+.hub-cf-tx-transfer.hub-cf-tx-legacyleg td:nth-child(4) { color: var(--text-muted); }
+.hub-cf-transfer-route {
+  display: inline-flex; align-items: center; gap: 3px; margin-left: 6px;
+  font-size: 0.72rem; color: var(--text-muted); white-space: nowrap;
+}
+
+.cfq-type.is-transfer {
+  color: var(--info, #00bcd4);
+  background: color-mix(in srgb, var(--info, #00bcd4) 16%, transparent);
+  border-color: color-mix(in srgb, var(--info, #00bcd4) 45%, transparent);
+}
+.cfq-arrow { color: var(--text-muted); }
 `;
         document.head.appendChild(styleEl);
       }
@@ -3551,6 +3846,10 @@ ${_aiShellHTML()}
           <span class="hub-cf-tab-dot hub-cf-tab-dot--income"></span>
           <span data-i18n="tabIncome">${_t('tabIncome')}</span>
         </button>
+        <button class="hub-cf-tab" data-tab="transfer" id="hub-cf-tab-transfer">
+          <span class="hub-cf-tab-dot hub-cf-tab-dot--transfer"></span>
+          <span data-i18n="tabTransfer">${_t('tabTransfer')}</span>
+        </button>
       </div>
       <button class="hub-cf-modal-close" id="hub-cf-modal-close" aria-label="Close modal">✕</button>
     </div>
@@ -3572,7 +3871,7 @@ ${_aiShellHTML()}
                  data-i18n-placeholder="placeholderDesc"
                  placeholder="${_t('placeholderDesc')}" maxlength="120" />
         </div>
-        <div class="hub-cf-form-group">
+        <div class="hub-cf-form-group" id="hub-cf-source-group">
           <label class="hub-cf-form-label" for="hub-cf-source" data-i18n="labelSource">${_t('labelSource')}</label>
           <select id="hub-cf-source" class="hub-cf-form-input hub-cf-source-select" required>
             <option value="uncategorized" data-i18n="sourceUncategorized">${_t('sourceUncategorized')}</option>
@@ -3581,9 +3880,23 @@ ${_aiShellHTML()}
             <option value="savings" data-i18n="sourceSavings">${_t('sourceSavings')}</option>
           </select>
         </div>
-        <div class="hub-cf-form-group">
+        <div class="hub-cf-form-group" id="hub-cf-category-group">
           <label class="hub-cf-form-label" for="hub-cf-category" data-i18n="labelCategory">${_t('labelCategory')}</label>
           <select id="hub-cf-category" class="hub-cf-form-input hub-cf-category-select" required></select>
+        </div>
+        <div class="hub-cf-form-group hub-cf-transfer-group" id="hub-cf-transfer-group" style="display:none;">
+          <div class="hub-cf-transfer-row">
+            <div class="hub-cf-transfer-col">
+              <label class="hub-cf-form-label" for="hub-cf-from" data-i18n="labelFrom">${_t('labelFrom')}</label>
+              <select id="hub-cf-from" class="hub-cf-form-input"></select>
+            </div>
+            <button type="button" class="hub-cf-transfer-swap" id="hub-cf-transfer-swap" title="${_escHtml(_t('transferSwap'))}" aria-label="${_escHtml(_t('transferSwap'))}">⇄</button>
+            <div class="hub-cf-transfer-col">
+              <label class="hub-cf-form-label" for="hub-cf-to" data-i18n="labelTo">${_t('labelTo')}</label>
+              <select id="hub-cf-to" class="hub-cf-form-input"></select>
+            </div>
+          </div>
+          <p class="hub-cf-form-hint" id="hub-cf-transfer-hint" aria-live="polite"></p>
         </div>
         <div class="hub-cf-form-actions">
           <button type="button" class="hub-cf-modal-btn hub-cf-modal-btn--cancel" id="hub-cf-btn-cancel" data-i18n="btnCancel">${_t('btnCancel')}</button>
@@ -3884,6 +4197,7 @@ ${_aiShellHTML()}
     // 4. Cập nhật lại các tùy chọn danh mục và bộ lọc
     _populateCategories();
     _populateCategoryFilterOptions();
+    if (_activeTab === 'transfer') _refreshTransferSelects(null, null);
 
     // 5. Render lại tất cả vùng động (Lịch sử, Biểu đồ, Heatmap, Sổ nợ, Kế hoạch AI)
     _refreshLedger();
@@ -4176,7 +4490,7 @@ ${_aiShellHTML()}
       return;
     }
 
-    var txs = _data.transactions;
+    var txs = _data.transactions.filter(function (tx) { return tx.type !== 'transfer'; });
 
     // ── 1. Determine the time window based on active chart filter ──
     var filteredTxs = [];
@@ -4357,7 +4671,7 @@ ${_aiShellHTML()}
   }
 
   function _refreshTransactions() {
-    var rawMonthTxs = _getMonthTransactions(_currentMonth.year, _currentMonth.month);
+    var rawMonthTxs = _getMonthLedgerTransactions(_currentMonth.year, _currentMonth.month);
     var txs = typeof _getFilteredAndSortedTransactions === 'function' ? _getFilteredAndSortedTransactions() : rawMonthTxs;
     var emptyEl = _qs('#hub-cf-empty-state');
     var tableEl = _qs('#hub-cf-table-wrap');
@@ -4389,13 +4703,22 @@ ${_aiShellHTML()}
 
     var html = '';
     txs.forEach(function (tx) {
-      var rowClass = tx.type === 'income' ? 'hub-cf-tx-income' : 'hub-cf-tx-expense';
+      var isTransfer = tx.type === 'transfer';
+      var legacyLeg = !isTransfer && _isLegacySavingsLeg(tx);
+      var rowClass = isTransfer ? 'hub-cf-tx-transfer'
+        : (legacyLeg ? 'hub-cf-tx-transfer hub-cf-tx-legacyleg'
+        : (tx.type === 'income' ? 'hub-cf-tx-income' : 'hub-cf-tx-expense'));
       var isExpense = tx.type === 'expense';
-      var prefix = isExpense ? '-' : '+';
+      var prefix = isTransfer ? '' : (isExpense ? '-' : '+');
       var amountFormatted = prefix + _formatVND(tx.amount).replace(/^\+/, '+').replace(/^-/, '-');
-      var catName = _categoryDisplayName(tx.category, tx.type);
+      var catName = isTransfer ? _categoryDisplayName(TRANSFER_CATEGORY.id, 'expense')
+        : (legacyLeg ? _legacyLegLabel(tx) : _categoryDisplayName(tx.category, tx.type));
+      var descShown = tx.desc || (isTransfer ? _transferRouteText(tx) : '');
       var sourceBadge = '';
-      if (tx.source === 'bank') {
+      if (isTransfer) {
+        sourceBadge = '<span class="hub-cf-transfer-route" title="' + _escHtml(_transferRouteText(tx)) + '">' +
+          _walletIcon(tx.from) + ' → ' + _walletIcon(tx.to) + '</span>';
+      } else if (tx.source === 'bank') {
         sourceBadge = '<span class="hub-cf-source-badge hub-cf-source-badge--bank" title="' + _escHtml(_t('sourceBank')) + '">🏦</span>';
       } else if (tx.source === 'cash') {
         sourceBadge = '<span class="hub-cf-source-badge hub-cf-source-badge--cash" title="' + _escHtml(_t('sourceCash')) + '">💵</span>';
@@ -4407,7 +4730,7 @@ ${_aiShellHTML()}
 
       html += '<tr class="' + rowClass + '" data-tx-id="' + tx.id + '">';
       html += '<td>' + _formatDate(tx.day, tx.month, tx.year) + '</td>';
-      html += '<td title="' + _escapeAttr(tx.desc || '') + '">' + _escHtml(tx.desc || '—') + '</td>';
+      html += '<td title="' + _escapeAttr(descShown) + '">' + _escHtml(descShown || '—') + '</td>';
       html += '<td><span class="hub-cf-cat-chip">' + _escHtml(catName) + '</span> ' + sourceBadge + '</td>';
       html += '<td>' + amountFormatted + '</td>';
       html += '<td>';
@@ -4557,6 +4880,7 @@ ${_aiShellHTML()}
 
   /** Cùng quy tắc với thẻ tổng kết: chuyển tiết kiệm & thu hồi nợ không phải thu/chi thật */
   function _bgClassifyTx(tx) {
+    if (tx.type === 'transfer') return 'transfer';
     var isSavings = tx.source === 'savings' || tx.category === 'tiet-kiem' ||
       tx.category === 'Tiết kiệm' || tx.category === '🐷 Tiết kiệm';
     var isDebtRecovery = tx.type === 'income' && (tx.category === 'thu-no' || tx.category === 'Thu nợ');
@@ -4955,6 +5279,12 @@ ${_aiShellHTML()}
       }
     });
 
+    _getMonthTransfers(ym.year, ym.month).forEach(function (tx) {
+      var key = 'transfer|' + tx.from + '>' + tx.to;
+      if (!transferByKey[key]) transferByKey[key] = { type: 'transfer', from: tx.from, to: tx.to, amt: 0 };
+      transferByKey[key].amt += Number(tx.amount) || 0;
+    });
+
     var plan = _bgResolvePlan(ym.year, ym.month).items;
     var t = _bgTiming(ym.year, ym.month);
 
@@ -5062,10 +5392,11 @@ ${_aiShellHTML()}
     if (transfers.length > 0) {
       html += '<p class="hub-cf-breakdown-section-label hub-cf-bs-xfer-label" style="margin-top:14px;" title="' + _escHtml(_t('bsXferTip')) + '">' + _escHtml(_t('bsXferLabel')) + '</p>';
       transfers.forEach(function (x) {
-        var name = _categoryDisplayName(x.cat, x.type === 'income' ? 'income' : 'expense');
+        var isT = x.type === 'transfer';
+        var name = isT ? _transferRouteLabel(x.from, x.to) : _categoryDisplayName(x.cat, x.type === 'income' ? 'income' : 'expense');
         html += '<div class="hub-cf-breakdown-item hub-cf-bs-xfer">' +
                   '<span class="hub-cf-breakdown-name">' + _escHtml(name) + '</span>' +
-                  '<span class="hub-cf-breakdown-amt">' + (x.type === 'income' ? '+' : '−') + _formatVND(x.amt) + '</span>' +
+                  '<span class="hub-cf-breakdown-amt">' + (isT ? '' : (x.type === 'income' ? '+' : '−')) + _formatVND(x.amt) + '</span>' +
                 '</div>';
       });
     }
@@ -5607,7 +5938,7 @@ ${_aiShellHTML()}
   var _cfqKwRe = null, _cfqIdx = null, _cfqIdxStamp = -1;
 
   function _cfqCatList(type) { return type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES; }
-  function _cfqCatOk(type, id) { return _cfqCatList(type).some(function (c) { return c.id === id; }); }
+  function _cfqCatOk(type, id) { return id !== 'tiet-kiem' && _cfqCatList(type).some(function (c) { return c.id === id; }); }
   function _cfqFallbackCat(type) { return _cfqCatOk(type, type === 'income' ? 'thu-nhap-khac' : 'chi-phi-khac') ? (type === 'income' ? 'thu-nhap-khac' : 'chi-phi-khac') : _cfqCatList(type)[0].id; }
 
   function _cfqKwRegexes() {
@@ -5629,7 +5960,7 @@ ${_aiShellHTML()}
     if (_cfqIdx && _cfqIdxStamp === txs.length) return _cfqIdx;
     var idx = { byDesc: {}, byTok: {} };
     txs.forEach(function (tx) {
-      if (!tx || !tx.desc || !tx.category || tx.category === 'thu-no' || tx.category === 'tiet-kiem') return;
+      if (!tx || tx.type === 'transfer' || !tx.desc || !tx.category || tx.category === 'thu-no' || tx.category === 'tiet-kiem') return;
       var type = tx.type === 'income' ? 'income' : 'expense';
       if (!_cfqCatOk(type, tx.category)) return;
       var key = _catKey(tx.desc);
@@ -5787,6 +6118,23 @@ ${_aiShellHTML()}
     if (desc.length > 120) desc = desc.slice(0, 120);
     if (desc) desc = desc.charAt(0).toUpperCase() + desc.slice(1);
 
+    // ── Chuyển ví (tiết kiệm): "gửi tiết kiệm 1tr3", "rút tiết kiệm 500k" ──
+    if (!forced) {
+      var tp = ' ' + _cfqPlain(text).replace(/[^a-z0-9]+/g, ' ') + ' ';
+      var wd = /(^|\s)(rut tiet kiem|rut tu tiet kiem|rut tk|lay tiet kiem)(?=\s)/.test(tp);
+      var dp = !wd && /(^|\s)(gui tiet kiem|gui tk|chuyen vao tiet kiem|cho vao tiet kiem|chuyen tiet kiem|nap tiet kiem|tiet kiem)(?=\s)/.test(tp);
+      if (amount > 0 && (wd || dp)) {
+        var wallet = (source === 'bank' || source === 'cash' || source === 'uncategorized') ? source : 'bank';
+        var tFrom = wd ? 'savings' : wallet, tTo = wd ? wallet : 'savings';
+        if (overrides.from) tFrom = overrides.from;
+        if (overrides.to) tTo = overrides.to;
+        var tdt = date || today;
+        if (overrides.date) { var tdm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(overrides.date); if (tdm) tdt = { y: +tdm[1], m: +tdm[2], d: +tdm[3] }; }
+        return { amount: amount, type: 'transfer', from: tFrom, to: tTo, category: TRANSFER_CATEGORY.id, source: wallet,
+          y: tdt.y, m: tdt.m, d: tdt.d, desc: desc, sure: true, assumedK: assumedK, dateGiven: !!date };
+      }
+    }
+
     // ── Loại + nhóm ──
     var g = _cfqGuess(' ' + _cfqPlain(desc).replace(/[^a-z0-9]+/g, ' ') + ' ', _catKey(desc), forced, desc.toLowerCase());
     var type = g.type, category = g.category, sure = g.sure;
@@ -5816,6 +6164,27 @@ ${_aiShellHTML()}
     if (!d.amount) {
       box.innerHTML = '<span class="cfq-need">' + _escHtml(_t('cfqNeedAmount')) + '</span>';
       if (saveBtn) saveBtn.disabled = true;
+      return;
+    }
+    if (d.type === 'transfer') {
+      var wopts = function (sel) {
+        var list = TRANSFER_WALLETS.slice();
+        if (list.indexOf(sel) < 0) list.push(sel);
+        return list.map(function (w) {
+          return '<option value="' + w + '"' + (w === sel ? ' selected' : '') + '>' + _escHtml(_walletIcon(w) + ' ' + _walletLabel(w)) + '</option>';
+        }).join('');
+      };
+      var thtml = '<button type="button" class="cfq-type is-transfer" id="cfq-type" aria-label="' + _escHtml(_t('transferSwap')) + '" title="' + _escHtml(_t('transferSwap')) + '">' + _escHtml(_t('cfqTransfer')) + '</button>' +
+        '<span class="cfq-amount cfd-num">' + _escHtml(_formatVNFull(d.amount)) + '</span>' +
+        '<input type="date" class="cfq-field" id="cfq-date" value="' + _cfqIso(d.y, d.m, d.d) + '" aria-label="' + _escHtml(_t('cfqDate')) + '">' +
+        '<select class="cfq-field" id="cfq-from" aria-label="' + _escHtml(_t('labelFrom')) + '">' + wopts(d.from) + '</select>' +
+        '<span class="cfq-arrow" aria-hidden="true">→</span>' +
+        '<select class="cfq-field" id="cfq-to" aria-label="' + _escHtml(_t('labelTo')) + '">' + wopts(d.to) + '</select>';
+      if (d.desc) thtml += '<span class="cfq-desc">' + _escHtml(d.desc) + '</span>';
+      if (d.from === d.to) thtml += '<span class="cfq-note">' + _escHtml(_t('transferSame')) + '</span>';
+      else if (d.assumedK) thtml += '<span class="cfq-note">' + _escHtml(_t('cfqAssumedK').replace('{x}', _formatVNFull(d.amount))) + '</span>';
+      box.innerHTML = thtml;
+      if (saveBtn) saveBtn.disabled = d.from === d.to;
       return;
     }
     var lang = _getCFLang();
@@ -5851,6 +6220,23 @@ ${_aiShellHTML()}
   function _cfqCommit() {
     var input = _cfqEl('cfq-input'), d = _cfqDraft;
     if (!input || !d || !(d.amount > 0) || !_data || !Array.isArray(_data.transactions)) return;
+    if (d.type === 'transfer') {
+      if (d.from === d.to) { _cfqShowDone('<span class="cfq-done-txt cfq-done-txt--err">' + _escHtml(_t('transferSame')) + '</span>', 4000); return; }
+      var ttx = _createTransfer({ amount: d.amount, iso: _cfqIso(d.y, d.m, d.d), desc: d.desc, from: d.from, to: d.to });
+      try { localStorage.setItem('hub_cf_last_transfer', d.from + '>' + d.to); } catch (_) {}
+      if (_currentMonth && (ttx.year !== _currentMonth.year || ttx.month !== _currentMonth.month)) {
+        _currentMonth.year = ttx.year; _currentMonth.month = ttx.month;
+      }
+      _debouncedPersist();
+      _renderAllViews();
+      _updateChart();
+      input.value = ''; _cfqOv = {}; _cfqRender();
+      _cfqShowDone('<span class="cfq-done-txt">' + _escHtml(_t('cfqSaved')) + ': ' + _escHtml(_t('cfqTransfer')) + ' ' +
+        _escHtml(_formatVNFull(ttx.amount)) + ' · ' + _escHtml(_transferRouteText(ttx)) + '</span>' +
+        '<button type="button" class="cfq-undo" id="cfq-undo" data-id="' + _escHtml(ttx.id) + '">' + _escHtml(_t('cfqUndo')) + '</button>', 8000);
+      input.focus();
+      return;
+    }
     var prevTab = _activeTab, prevEditing = _editingTxId, prevFlag = window.isEditingTransactionMode;
     var before = _data.transactions.length;
     try {
@@ -5906,6 +6292,11 @@ ${_aiShellHTML()}
         if (!_cfqDraft) return;
         if (t.id === 'cfq-cat') { _cfqOv.category = t.value; _cfqDraft.category = t.value; _cfqDraft.sure = true; var n = box.querySelector('.cfq-note'); if (n && !_cfqDraft.assumedK) n.remove(); }
         else if (t.id === 'cfq-src') { _cfqOv.source = t.value; _cfqDraft.source = t.value; }
+        else if (t.id === 'cfq-from' || t.id === 'cfq-to') {
+          var fe = _cfqEl('cfq-from'), te = _cfqEl('cfq-to');
+          if (fe && te) { _cfqOv.from = fe.value; _cfqOv.to = te.value; _cfqDraft.from = fe.value; _cfqDraft.to = te.value; }
+          _cfqRender();
+        }
         else if (t.id === 'cfq-date' && t.value) {
           _cfqOv.date = t.value;
           var p = t.value.split('-'); _cfqDraft.y = +p[0]; _cfqDraft.m = +p[1]; _cfqDraft.d = +p[2];
@@ -5914,6 +6305,12 @@ ${_aiShellHTML()}
       box.addEventListener('click', function (e) {
         var b = e.target.closest ? e.target.closest('#cfq-type') : null;
         if (!b || !_cfqDraft) return;
+        if (_cfqDraft.type === 'transfer') {            // đổi chiều: từ ↔ đến
+          _cfqOv.from = _cfqDraft.to; _cfqOv.to = _cfqDraft.from;
+          _cfqRender();
+          var sb = _cfqEl('cfq-type'); if (sb) sb.focus();
+          return;
+        }
         _cfqOv.type = _cfqDraft.type === 'income' ? 'expense' : 'income';
         delete _cfqOv.category;
         _cfqRender();
@@ -6512,6 +6909,23 @@ ${_aiShellHTML()}
     if (tabIncome) {
       tabIncome.addEventListener('click', function () { _switchTab('income'); });
     }
+    const tabTransfer = _qs('#hub-cf-tab-transfer');
+    if (tabTransfer) {
+      tabTransfer.addEventListener('click', function () { _switchTab('transfer'); });
+    }
+    ['#hub-cf-from', '#hub-cf-to'].forEach(function (sel) {
+      var el = _qs(sel);
+      if (el) el.addEventListener('change', _updateTransferHint);
+    });
+    var swapBtn = _qs('#hub-cf-transfer-swap');
+    if (swapBtn) {
+      swapBtn.addEventListener('click', function () {
+        var f = _qs('#hub-cf-from'), t = _qs('#hub-cf-to');
+        if (!f || !t) return;
+        var tmp = f.value; f.value = t.value; t.value = tmp;
+        _updateTransferHint();
+      });
+    }
 
     // Close button
     const closeBtn = _qs('#hub-cf-modal-close');
@@ -6572,8 +6986,14 @@ ${_aiShellHTML()}
 
     const lang = _getCFLang();
     const categories = _activeTab === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+    // Danh mục "tiết kiệm" kiểu cũ không còn để chọn khi tạo mới (dùng tab Chuyển ví);
+    // chỉ giữ lại khi đang sửa một giao dịch cũ thuộc danh mục đó.
+    var _editLeg = (_editingTxId && _data && _data.transactions)
+      ? _data.transactions.find(function (t) { return t.id === _editingTxId; }) : null;
+    var _keepSav = !!(_editLeg && _editLeg.category === 'tiet-kiem');
     var html = '';
     categories.forEach(function (cat) {
+      if (cat.id === 'tiet-kiem' && !_keepSav) return;
       var label = lang === 'en' ? cat.name : (cat.nameVI || cat.name);
       html += '<option value="' + cat.id + '">' + _escHtml(label) + '</option>';
     });
@@ -6593,7 +7013,7 @@ ${_aiShellHTML()}
     if (!container) return;
 
     const lang = _getCFLang();
-    var allCats = INCOME_CATEGORIES.concat(EXPENSE_CATEGORIES);
+    var allCats = INCOME_CATEGORIES.concat(EXPENSE_CATEGORIES).concat([TRANSFER_CATEGORY]);
     var html = '';
     allCats.forEach(function (cat) {
       var isChecked = _txTableState.category.selected.indexOf(cat.id) !== -1;
@@ -6619,8 +7039,55 @@ ${_aiShellHTML()}
 
     if (tabExpense) tabExpense.classList.toggle('hub-cf-tab--active', tab === 'expense');
     if (tabIncome)  tabIncome.classList.toggle('hub-cf-tab--active', tab === 'income');
+    const tabTransfer = _qs('#hub-cf-tab-transfer');
+    if (tabTransfer) tabTransfer.classList.toggle('hub-cf-tab--active', tab === 'transfer');
 
     _populateCategories();
+    _applyTransferMode(false);
+  }
+
+  /** Hiện/ẩn các ô theo tab: Chuyển ví dùng "Từ ví → Đến ví", không có nguồn tiền / hạng mục */
+  function _applyTransferMode(resetDefaults) {
+    var on = _activeTab === 'transfer';
+    var tg = _qs('#hub-cf-transfer-group'), sg = _qs('#hub-cf-source-group'), cg = _qs('#hub-cf-category-group');
+    if (tg) tg.style.display = on ? '' : 'none';
+    if (sg) sg.style.display = on ? 'none' : '';
+    if (cg) cg.style.display = on ? 'none' : '';
+    var catEl = _qs('#hub-cf-category'), srcEl = _qs('#hub-cf-source');
+    if (catEl) catEl.required = !on;
+    if (srcEl) srcEl.required = !on;
+    if (!on) return;
+    var from = null, to = null;
+    if (resetDefaults && !window.isEditingTransactionMode) {
+      try {
+        var last = (localStorage.getItem('hub_cf_last_transfer') || '').split('>');
+        if (last.length === 2) { from = last[0]; to = last[1]; }
+      } catch (e) {}
+    }
+    _refreshTransferSelects(from, to);
+  }
+
+  function _refreshTransferSelects(fromVal, toVal) {
+    var f = _qs('#hub-cf-from'), t = _qs('#hub-cf-to');
+    if (!f || !t) return;
+    var curF = fromVal || f.value, curT = toVal || t.value;
+    var list = TRANSFER_WALLETS.slice();
+    [curF, curT].forEach(function (v) { if (v && list.indexOf(v) < 0) list.push(v); });   // ví lạ từ dữ liệu cũ
+    var opts = list.map(function (w) {
+      return '<option value="' + w + '">' + _escHtml(_walletIcon(w) + ' ' + _walletLabel(w)) + '</option>';
+    }).join('');
+    f.innerHTML = opts; t.innerHTML = opts;
+    f.value = list.indexOf(curF) >= 0 ? curF : 'bank';
+    t.value = list.indexOf(curT) >= 0 ? curT : 'savings';
+    _updateTransferHint();
+  }
+
+  function _updateTransferHint() {
+    var f = _qs('#hub-cf-from'), t = _qs('#hub-cf-to'), h = _qs('#hub-cf-transfer-hint');
+    if (!f || !t || !h) return;
+    var same = f.value === t.value;
+    h.classList.toggle('is-error', same);
+    h.textContent = same ? _t('transferSame') : _transferRouteLabel(f.value, t.value) + ' · ' + _t('transferHint');
   }
 
   function _openModal() {
@@ -6632,6 +7099,7 @@ ${_aiShellHTML()}
     if (form) form.reset();
 
     window.isEditingTransactionMode = false; // Flag for populateCategories
+    _applyTransferMode(true);
 
     const dateInput = _qs('#hub-cf-date');
     if (dateInput) dateInput.value = _todayISO();
@@ -6720,6 +7188,7 @@ ${_aiShellHTML()}
     if (descInput) descInput.value = tx.desc || '';
     if (categorySelect) categorySelect.value = tx.category;
     if (sourceSelect) sourceSelect.value = tx.source || 'bank';  // NEW: default to 'bank'
+    if (tx.type === 'transfer') _refreshTransferSelects(tx.from, tx.to);
 
     // Show modal
     overlay.style.display = 'flex';
@@ -6747,6 +7216,10 @@ ${_aiShellHTML()}
       _showInput('hub-cf-date');
       return;
     }
+    if (_activeTab === 'transfer') {
+      _saveTransferFromModal(amount, dateStr, desc);
+      return;
+    }
     if (!category) {
       _showInput('hub-cf-category');
       return;
@@ -6765,8 +7238,11 @@ ${_aiShellHTML()}
       // EDIT MODE: Update existing transaction
       const txIndex = _data.transactions.findIndex(t => t.id === _editingTxId);
       if (txIndex !== -1) {
+        var _prevTx = Object.assign({}, _data.transactions[txIndex]);
+        delete _prevTx.from; delete _prevTx.to; delete _prevTx.legacyLegs;   // đổi từ chuyển ví sang thu/chi
+        if (_prevTx.type === 'transfer' && _prevTx.goalId) { _glUnlinkTransfer(_prevTx); delete _prevTx.goalId; }
         _data.transactions[txIndex] = {
-          ..._data.transactions[txIndex],
+          ..._prevTx,
           type: _activeTab,
           amount: amount,
           year: year,
@@ -6819,6 +7295,49 @@ ${_aiShellHTML()}
     _renderAllViews();
   }
 
+  function _saveTransferFromModal(amount, dateStr, desc) {
+    var fromEl = _qs('#hub-cf-from'), toEl = _qs('#hub-cf-to');
+    var from = fromEl ? fromEl.value : '', to = toEl ? toEl.value : '';
+    if (!from || !to || from === to) {
+      _updateTransferHint();
+      _showInput('hub-cf-to');
+      return;
+    }
+    var dp = dateStr.split('-');
+    var year = parseInt(dp[0], 10), month = parseInt(dp[1], 10), day = parseInt(dp[2], 10);
+
+    if (_editingTxId) {
+      var idx = _data.transactions.findIndex(function (t) { return t.id === _editingTxId; });
+      if (idx !== -1) {
+        var old = _data.transactions[idx];
+        var next = {
+          id: old.id, type: 'transfer', amount: amount, year: year, month: month, day: day,
+          desc: desc || '', category: TRANSFER_CATEGORY.id, from: from, to: to,
+          createdAt: old.createdAt || Date.now()
+        };
+        if (old.goalId && old.type === 'transfer') next.goalId = old.goalId;
+        if (old.legacyLegs) next.legacyLegs = old.legacyLegs;
+        _data.transactions[idx] = next;
+        _glSyncFromTransfer(next);
+      }
+      _editingTxId = null;
+    } else {
+      _createTransfer({ amount: amount, iso: dateStr, desc: desc, from: from, to: to });
+    }
+
+    if (_isOfflineMode) { _isOfflineMode = false; }
+    try { localStorage.setItem('hub_cf_last_transfer', from + '>' + to); } catch (e) {}
+
+    _debouncedPersist();
+    _closeModal();
+    if (year !== _currentMonth.year || month !== _currentMonth.month) {
+      _currentMonth.year = year;
+      _currentMonth.month = month;
+    }
+    _renderAllViews();
+    _updateChart();
+  }
+
   function _deleteTransaction(txId) {
     var idx = -1;
     for (var i = 0; i < _data.transactions.length; i++) {
@@ -6826,6 +7345,8 @@ ${_aiShellHTML()}
     }
     if (idx === -1) return;
 
+    var _removed = _data.transactions[idx];
+    if (_removed && _removed.type === 'transfer' && _removed.goalId) _glUnlinkTransfer(_removed);
     _data.transactions.splice(idx, 1);
     _debouncedPersist();
     _renderAllViews();
@@ -7121,6 +7642,7 @@ ${_aiShellHTML()}
       // ═══ 4. STRICT OVERWRITE: replace entire state & persist ═══
       _normalizeCategories(importedTxs);
       _data.transactions = importedTxs;
+      _migrateSavingsLegs();   // file Excel lưu mỗi lệnh chuyển ví thành hai dòng → gộp lại
       _isDataLoaded = true;
 
       // ── BREAK THE OFFLINE SEAL: user explicitly imported data ──
@@ -8141,7 +8663,16 @@ ${_aiShellHTML()}
       return !isSavings && !(tx.type === 'income' && isDebtRecovery) && !_isLoanOut(tx);
     }
     var fallbackYear = _currentMonth ? _currentMonth.year : new Date().getFullYear();
-    var rows = _data.transactions.filter(function (tx) { return tx.type === 'income' || tx.type === 'expense'; }).map(function (tx) {
+    // Excel không có loại "chuyển ví": xuất mỗi lệnh thành hai dòng (chân chi + chân thu, danh mục tiết kiệm,
+    // không tính vào Thu/Chi) để nhập lại vẫn đúng số dư và được gộp lại thành một lệnh.
+    var _exportTxs = [];
+    _data.transactions.forEach(function (tx) {
+      if (tx.type !== 'transfer') { _exportTxs.push(tx); return; }
+      var route = ' [' + _walletLabel(tx.from) + ' → ' + _walletLabel(tx.to) + ']';
+      var base = { amount: tx.amount, year: tx.year, month: tx.month, day: tx.day, desc: (tx.desc || '') + route, category: 'tiet-kiem' };
+      _exportTxs.push(Object.assign({ type: 'expense', source: tx.from }, base), Object.assign({ type: 'income', source: tx.to }, base));
+    });
+    var rows = _exportTxs.filter(function (tx) { return tx.type === 'income' || tx.type === 'expense'; }).map(function (tx) {
       return { y: tx.year || fallbackYear, m: tx.month || 1, d: tx.day || 1, type: tx.type, cat: catLabel(tx), desc: tx.desc || '',
         src: SRC_VI[tx.source] || 'Chưa phân loại', amount: tx.amount || 0, rep: reported(tx) };
     });
@@ -8969,7 +9500,9 @@ ${_aiShellHTML()}
       };
     }
 
-    var trans = _data.transactions.slice();
+    // Biểu đồ thu/chi chỉ vẽ thu/chi thật — cùng quy tắc với các thẻ tổng kết
+    // (bỏ chuyển ví, chuyển tiết kiệm kiểu cũ, cho vay / thu hồi nợ)
+    var trans = _data.transactions.filter(function (tx) { return _bgClassifyTx(tx) !== 'transfer'; });
 
     if (_chartFilter === 'day') {
       var dayMap = {};
@@ -9193,7 +9726,7 @@ ${_aiShellHTML()}
     // Tháng nào trong năm này có chi tiêu → chấm nhỏ
     var hasData = {};
     ((_data && _data.transactions) || []).forEach(function (tx) {
-      if (tx.type === 'expense' && tx.year === year) hasData[tx.month] = true;
+      if (_bgClassifyTx(tx) === 'expense' && tx.year === year) hasData[tx.month] = true;
     });
 
     var html = '';
@@ -9391,7 +9924,7 @@ ${_aiShellHTML()}
 
     const monthTxs = _getMonthTransactions(year, month);
     monthTxs.forEach(tx => {
-      if (tx.type !== 'expense') return;
+      if (_bgClassifyTx(tx) !== 'expense') return;   // chuyển ví / tiết kiệm không phải chi tiêu trong ngày
       const day = tx.day;
       if (!dailyExpenses[day]) dailyExpenses[day] = 0;
       dailyExpenses[day] += tx.amount || 0;
@@ -9901,6 +10434,10 @@ ${_aiShellHTML()}
         agg.spent += amt;
         agg.byCat[tx.category] = (agg.byCat[tx.category] || 0) + amt;
       }
+    });
+    // Chuyển vào quỹ tiết kiệm (tiền mới để dành); rút ra khỏi quỹ không tính
+    _getMonthTransfers(year, month).forEach(function (tx) {
+      if (tx.to === 'savings' && tx.from !== 'savings') agg.saved += Number(tx.amount) || 0;
     });
     return agg;
   }
@@ -12351,10 +12888,12 @@ ${_aiShellHTML()}
     var txIds = [];
     if (o.wallet === 'bank' || o.wallet === 'cash') {
       var desc = _gl_t(o.kind === 'withdraw' ? 'txWithdraw' : 'txDeposit', { name: g.name }) + (o.note ? ' — ' + o.note : '');
-      var walletTx = _glMakeTx(o.kind === 'withdraw' ? 'income' : 'expense', o.wallet, o.amount, o.date, desc, g.id);
-      var poolTx = _glMakeTx(o.kind === 'withdraw' ? 'expense' : 'income', 'savings', o.amount, o.date, desc, g.id);
-      _data.transactions.push(walletTx, poolTx);
-      txIds = [walletTx.id, poolTx.id];
+      var goalTransfer = _createTransfer({
+        amount: o.amount, iso: o.date, desc: desc, goalId: g.id,
+        from: o.kind === 'withdraw' ? 'savings' : o.wallet,
+        to:   o.kind === 'withdraw' ? o.wallet : 'savings'
+      });
+      txIds = [goalTransfer.id];
     }
     g.contribs.push({ id: _glId('c'), amount: sign * o.amount, date: o.date, wallet: o.wallet, txIds: txIds, note: o.note || '', createdAt: Date.now() });
     var achieved = _glRecheckStatus(g);
