@@ -3181,17 +3181,23 @@ body .hub-cf-dashboard.cfd-host.glass-card:hover {
 .cfc-empty[hidden] { display: none; }
 
 /* ============================================================
-   13. CASHFLOW — Nhập nhanh một dòng (.cfq)
+   13. CASHFLOW — Nhập nhanh (.cfq): một dòng · nhiều khoản · chip gợi ý nhóm
    ============================================================ */
 .cfq {
   --cfq-ac:   var(--accent-primary, var(--primary, #00e676));
   --cfq-card: var(--bg-surface, #12121a);
+  --cfq-el:   var(--bg-elevated, #1a1a26);
   --cfq-tx:   var(--text-primary, #e8e8ed);
   --cfq-mu:   var(--text-secondary, #8b8b9e);
   --cfq-pos:  var(--success, #2ee6a6);
   --cfq-neg:  var(--danger, #ff5c6c);
   --cfq-warn: var(--warning, #f59e0b);
-  --cfq-line: color-mix(in srgb, var(--cfq-tx) 12%, transparent);
+  --cfq-gold: var(--cf-gold, var(--cfq-warn));
+  --cfq-on:   var(--cfg-on-accent, #06121a);
+  --cfq-num:  var(--font-mono, ui-monospace, 'JetBrains Mono', monospace);
+  --cfq-line:   color-mix(in srgb, var(--cfq-tx) 12%, transparent);
+  --cfq-line-2: color-mix(in srgb, var(--cfq-tx) 24%, transparent);
+  --cfq-ease: var(--ease-out-expo, cubic-bezier(0.19, 1, 0.22, 1));
 
   display: flex; flex-direction: column; gap: 10px; width: 100%;
   color: var(--cfq-tx); font-family: var(--font-body, inherit);
@@ -3201,54 +3207,204 @@ body .hub-cf-dashboard.cfd-host.glass-card:hover {
 .cfq *, .cfq *::before, .cfq *::after { box-sizing: border-box; }
 .cfq [hidden] { display: none !important; }
 
+/* ── Thanh nhập ─────────────────────────────────────────── */
 .cfq-bar {
   display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 6px 6px 6px 16px;
   background: var(--cfq-card); border: 1px solid var(--glass-border, var(--cfq-line)); border-radius: 16px;
+  transition: border-color .18s, box-shadow .18s;
 }
-.cfq-bar:focus-within { border-color: var(--cfq-ac); outline: 2px solid color-mix(in srgb, var(--cfq-ac) 35%, transparent); outline-offset: 1px; }
-.cfq-ico { flex-shrink: 0; color: var(--cfq-ac); }
+.cfq-bar:focus-within {
+  border-color: var(--cfq-ac);
+  outline: 2px solid color-mix(in srgb, var(--cfq-ac) 35%, transparent); outline-offset: 1px;
+}
+.cfq-ico { flex-shrink: 0; color: var(--cfq-ac); align-self: center; }
 .cfq-input, .cfq .cfq-input:focus, .cfq .cfq-input:focus-visible {
-  flex: 1 1 auto; min-width: 0; min-height: 44px; padding: 0;
+  flex: 1 1 auto; min-width: 0; min-height: 44px; max-height: 132px; margin: 0; padding: 10px 0;
+  resize: none; overflow-y: auto; scrollbar-width: thin; line-height: 1.5;
   outline: none !important; border: 0 !important; background: transparent !important; box-shadow: none !important;
-  color: var(--cfq-tx); font: inherit; font-size: 1rem;
+  color: var(--cfq-tx); font: inherit; font-size: 1rem; line-height: 1.5;
 }
 .cfq-input::placeholder { color: var(--cfq-mu); opacity: 1; }
 .cfq-save {
-  flex-shrink: 0; min-height: 44px; padding: 0 20px; border-radius: 12px; cursor: pointer;
-  font: inherit; font-size: 0.9rem; font-weight: 600;
-  background: transparent; color: var(--cfq-ac); border: 1px solid var(--cfq-ac);
+  flex-shrink: 0; align-self: center; min-height: 44px; padding: 0 20px; border-radius: 12px; cursor: pointer;
+  font: inherit; font-size: 0.9rem; font-weight: 600; white-space: nowrap;
+  background: var(--cfq-ac); color: var(--cfq-on); border: 1px solid transparent;
+  box-shadow: var(--cfk-btn-shadow, none);
+  transition: transform .15s var(--cfq-ease), box-shadow .15s, opacity .15s, background .15s;
 }
-.cfq-save:disabled { opacity: 0.4; cursor: not-allowed; }
+.cfq-save:hover:not(:disabled) { transform: translateY(-1px); box-shadow: var(--cfk-btn-shadow-h, none); }
+.cfq-save:active:not(:disabled) { transform: translateY(0) scale(.98); }
+.cfq-save:focus-visible { outline: 2px solid var(--cfq-ac); outline-offset: 2px; }
+.cfq-save:disabled {
+  background: transparent; color: var(--cfq-ac); border-color: var(--cfq-ac);
+  opacity: 0.4; cursor: not-allowed; box-shadow: none;
+}
 
+/* ── Khung xem trước ────────────────────────────────────── */
 .cfq-preview {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 14px;
+  display: flex; flex-direction: column; overflow: hidden;
   background: var(--cfq-card); border: 1px solid var(--glass-border, var(--cfq-line)); border-radius: 14px;
+  background-image: linear-gradient(180deg, color-mix(in srgb, var(--cfq-tx) 4%, transparent), transparent 48px);
+  animation: cfq-rise .26s var(--cfq-ease) both;
 }
+.cfq-need { padding: 14px 16px; font-size: 0.85rem; color: var(--cfq-mu); }
+
+.cfq-item { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; min-width: 0; }
+.cfq-top { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; }
+.cfq-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.cfq-desc {
+  flex: 1 1 140px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 0.9rem; color: var(--cfq-mu);
+}
+.cfq-note { font-size: 0.76rem; color: var(--cfq-gold); letter-spacing: .01em; }
+.cfq-arrow { color: var(--text-muted, var(--cfq-mu)); }
+
+/* Loại giao dịch (pill) */
 .cfq-type {
   display: inline-flex; align-items: center; min-height: 36px; padding: 0 14px; border-radius: 99px; cursor: pointer;
-  font: inherit; font-size: 0.82rem; font-weight: 600; background: transparent; color: var(--cfq-tx); border: 1px solid var(--cfq-line);
+  font: inherit; font-size: 0.8rem; font-weight: 600; letter-spacing: .02em;
+  background: transparent; color: var(--cfq-tx); border: 1px solid var(--cfq-line);
+  transition: border-color .15s, background .15s;
 }
+.cfq-type:hover { border-color: var(--cfq-line-2); background: color-mix(in srgb, var(--cfq-tx) 5%, transparent); }
+.cfq-type:focus-visible { outline: 2px solid var(--cfq-ac); outline-offset: 2px; }
 .cfq-type::before { content: ""; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background-color: var(--cfq-neg); }
 .cfq-type.is-income::before { background-color: var(--cfq-pos); }
-.cfq-amount { font-family: var(--font-mono); font-size: 1.1rem; font-weight: 600; }
-.cfq-field {
-  min-height: 36px; max-width: 100%; padding: 0 10px; border-radius: 10px; font: inherit; font-size: 0.8rem;
-  background: transparent; color: var(--cfq-tx); border: 1px solid var(--cfq-line);
-}
-.cfq-desc { flex: 1 1 140px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.82rem; color: var(--cfq-mu); }
-.cfq-note { flex: 1 1 100%; font-size: 0.76rem; color: var(--cfq-warn); }
-.cfq-need { font-size: 0.82rem; color: var(--cfq-mu); }
+.cfq-type { white-space: nowrap; }
+.cfq-type.is-transfer::before { background-color: currentColor; }
+.cfq-type--sm { min-height: 24px; padding: 0 10px; font-size: 0.68rem; text-transform: uppercase; letter-spacing: .08em; }
+.cfq-type--sm::before { width: 6px; height: 6px; margin-right: 6px; }
 
+/* Số tiền */
+.cfq-amount {
+  font-family: var(--cfq-num); font-size: 1.6rem; font-weight: 600; line-height: 1.1;
+  letter-spacing: -0.01em; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.cfq-amount.is-expense { color: var(--cfq-neg); }
+.cfq-amount.is-income  { color: var(--cfq-pos); }
+.cfq-amount.is-transfer { color: var(--info, var(--cfq-ac)); }
+.cfq-amount.is-expense::before { content: "−"; margin-right: 2px; opacity: .8; }
+.cfq-amount.is-income::before  { content: "+"; margin-right: 2px; opacity: .8; }
+
+/* Trường chọn (ngày · nhóm · nguồn) */
+.cfq-field {
+  min-height: 34px; max-width: 100%; padding: 0 12px; border-radius: 999px; cursor: pointer;
+  font: inherit; font-size: 0.8rem; color: var(--cfq-tx);
+  background: color-mix(in srgb, var(--cfq-tx) 5%, transparent); border: 1px solid var(--cfq-line);
+  transition: border-color .15s, background .15s;
+}
+.cfq-field:hover { border-color: var(--cfq-line-2); }
+.cfq-field:focus-visible { outline: 2px solid color-mix(in srgb, var(--cfq-ac) 60%, transparent); outline-offset: 1px; }
+select.cfq-field {
+  appearance: none; -webkit-appearance: none; padding-right: 30px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--cfq-mu) 50%), linear-gradient(135deg, var(--cfq-mu) 50%, transparent 50%);
+  background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%;
+  background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
+}
+.cfq-field option { background: var(--cfq-card); color: var(--cfq-tx); }
+.cfq-item.is-unsure .cfq-field[data-f="cat"] {
+  border-style: dashed; border-color: color-mix(in srgb, var(--cfq-gold) 70%, transparent); color: var(--cfq-gold);
+}
+
+/* ── Chip gợi ý nhóm (#1) ───────────────────────────────── */
+.cfq-pick {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 12px; border-radius: 12px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--cfq-gold) 12%, transparent), transparent 88%);
+  border: 1px solid color-mix(in srgb, var(--cfq-gold) 30%, transparent);
+}
+.cfq-pick-head { flex: 1 1 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 2px; }
+.cfq-pick-lbl { font-size: 0.66rem; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--cfq-gold); }
+.cfq-pick-keys { font: 600 0.66rem var(--cfq-num); letter-spacing: .04em; color: var(--cfq-mu); }
+.cfq-chip {
+  display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 12px 0 10px; border-radius: 999px; cursor: pointer;
+  font: inherit; font-size: 0.82rem; font-weight: 500; color: var(--cfq-tx); white-space: nowrap;
+  background: color-mix(in srgb, var(--cfq-card) 65%, var(--cfq-el)); border: 1px solid var(--cfq-line);
+  transition: transform .15s var(--cfq-ease), border-color .15s, background .15s, box-shadow .15s;
+}
+.cfq-pick.is-fresh .cfq-chip { animation: cfq-chip-in .3s var(--cfq-ease) both; animation-delay: calc(var(--i, 0) * 40ms); }
+.cfq-chip:hover { border-color: var(--cfq-gold); transform: translateY(-1px); box-shadow: 0 6px 14px -10px var(--cfq-gold); }
+.cfq-chip:active { transform: translateY(0) scale(.97); }
+.cfq-chip:focus-visible { outline: 2px solid var(--cfq-gold); outline-offset: 2px; }
+.cfq-chip-ico { font-size: 1rem; line-height: 1; }
+.cfq-chip--more { padding: 0 12px; color: var(--cfq-mu); background: transparent; border-style: dashed; }
+.cfq-kbd {
+  min-width: 18px; padding: 3px 5px; border-radius: 5px; text-align: center; font: 600 0.64rem/1 var(--cfq-num); color: var(--cfq-mu);
+  border: 1px solid var(--cfq-line-2); border-bottom-width: 2px; background: transparent;
+}
+.cfq-pick-all { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 8px; padding-top: 10px; border-top: 1px dashed var(--cfq-line); }
+
+/* ── Nhiều khoản (#4) ───────────────────────────────────── */
+.cfq-bhead {
+  display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px;
+  padding: 12px 16px; border-bottom: 1px solid var(--cfq-line);
+}
+.cfq-bcount { font-size: 0.68rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--cfq-gold); }
+.cfq-bsum { font-size: 0.82rem; color: var(--cfq-mu); }
+.cfq-bsum b { color: var(--cfq-tx); font: 600 0.9rem var(--cfq-num); font-variant-numeric: tabular-nums; }
+.cfq-rows { list-style: none; margin: 0; padding: 0; max-height: 52vh; overflow-y: auto; scrollbar-width: thin; }
+.cfq-row { flex-direction: row; align-items: flex-start; gap: 12px; border-bottom: 1px solid var(--cfq-line); }
+.cfq-row:last-child { border-bottom: 0; }
+.cfq-row.is-new { animation: cfq-row-in .28s var(--cfq-ease) both; animation-delay: calc(var(--i, 0) * 32ms); }
+.cfq-rbody { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 10px; transition: opacity .2s; }
+.cfq-row.is-off .cfq-rbody { opacity: .4; }
+.cfq-rline { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.cfq-rdesc { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.92rem; font-weight: 500; }
+.cfq-ramt { flex: 0 0 auto; font-size: 1.05rem; }
+.cfq-row .cfq-field { min-height: 30px; font-size: 0.76rem; }
+.cfq-row .cfq-pick { padding: 8px 10px; }
+.cfq-row .cfq-chip { min-height: 30px; font-size: 0.78rem; }
+
+.cfq-check { position: relative; flex: 0 0 22px; width: 22px; height: 22px; margin-top: 2px; display: inline-flex; cursor: pointer; }
+.cfq-check input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.cfq-box { pointer-events: none; width: 20px; height: 20px; margin: 1px; border-radius: 7px; display: grid; place-items: center; border: 1.5px solid var(--cfq-line-2); transition: background .15s, border-color .15s; }
+.cfq-check input:checked + .cfq-box { background: var(--cfq-ac); border-color: var(--cfq-ac); }
+.cfq-check input:checked + .cfq-box::after {
+  content: ""; width: 5px; height: 9px; margin-top: -2px; border: solid var(--cfq-on); border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+.cfq-check input:focus-visible + .cfq-box { outline: 2px solid var(--cfq-ac); outline-offset: 2px; }
+
+.cfq-row.is-bad { flex-direction: row; align-items: center; background: color-mix(in srgb, var(--cfq-neg) 7%, transparent); }
+.cfq-bad-ico {
+  flex: 0 0 22px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 0.75rem; font-weight: 700; color: var(--cfq-neg); border: 1.5px solid var(--cfq-neg);
+}
+.cfq-rnote { flex: 0 0 auto; font-size: 0.74rem; color: var(--cfq-neg); }
+
+/* ── Thông báo đã lưu · gợi ý ───────────────────────────── */
 .cfq-done {
   display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 8px 8px 8px 14px;
   border: 1px solid color-mix(in srgb, var(--cfq-pos) 45%, transparent); border-radius: 12px; font-size: 0.85rem;
+  animation: cfq-rise .26s var(--cfq-ease) both;
 }
 .cfq-done-txt--err { color: var(--cfq-neg); }
 .cfq-undo {
   min-height: 36px; padding: 0 14px; border-radius: 10px; cursor: pointer; font: inherit; font-size: 0.8rem;
   background: transparent; color: var(--cfq-tx); border: 1px solid var(--cfq-line);
 }
+.cfq-undo:hover { border-color: var(--cfq-line-2); }
 .cfq-hint { padding: 0 4px; font-size: 0.74rem; color: var(--cfq-mu); }
+
+@keyframes cfq-rise    { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes cfq-chip-in { from { opacity: 0; transform: translateY(6px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes cfq-row-in  { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
+
+@media (max-width: 560px) {
+  .cfq-top { gap: 6px 10px; }
+  .cfq-amount { font-size: 1.4rem; }
+  .cfq-save { padding: 0 14px; }
+  .cfq-item { padding: 12px 12px; }
+  .cfq-rline { flex-wrap: wrap; row-gap: 4px; }
+  .cfq-rdesc { order: 3; flex: 1 1 100%; }
+  .cfq-ramt { margin-left: auto; font-size: 1rem; }
+  .cfq-meta { gap: 6px; }
+  .cfq-meta input[type="date"].cfq-field { width: 132px; }
+  .cfq-meta select.cfq-field { flex: 1 1 120px; min-width: 0; }
+  .cfq-pick { padding: 8px 10px; gap: 6px; }
+}
+@media (hover: none) { .cfq-kbd { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .cfq *, .cfq *::before, .cfq *::after { animation: none !important; transition: none !important; }
+}
 
 /* ============================================================
    14. DEBT LEDGER (.dl, .hub-cf-debt-*) & DEBT FORM (.hub-cf-df-*)

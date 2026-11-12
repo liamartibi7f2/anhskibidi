@@ -135,12 +135,14 @@ const cashflowModule = (function () {
       cfdNoData:           'Not enough data to compare yet',
       cfdPartial:          'Estimate up to day {d}, compared over the same days',
       cfdWhy:              'What changed vs {m} (same period)',
-      cfqLabel: 'Quick add', cfqPlaceholder: 'Type one line: pho 55k · grab 48k yesterday · salary 20tr',
-      cfqHint: 'Enter to save · Esc to clear · understands 35k, 1tr2, yesterday, 5/10, bank, cash',
+      cfqLabel: 'Quick add', cfqPlaceholder: 'Type one or many: pho 55k · grab 48k yesterday · salary 20tr',
+      cfqHint: 'Enter to save · Shift+Enter new line · Esc to clear · several at once: separate with commas or new lines · understands 35k, 1tr2, yesterday, 5/10',
       cfqSave: 'Save', cfqExpense: 'Expense', cfqIncome: 'Income', cfqToggleType: 'Switch income / expense',
       cfqNeedAmount: 'Add an amount, e.g. 55k or 1tr2', cfqUnsure: 'Not sure about the category, please check',
       cfqAssumedK: 'Read as {x}', cfqSaved: 'Added', cfqUndo: 'Undo', cfqUndone: 'Undone',
       cfqDate: 'Date', cfqCategory: 'Category', cfqSource: 'Source', cfqSaveFail: 'Could not save, please check',
+      cfqPick: 'Pick a category', cfqMore: 'More', cfqSaveN: 'Save {n}', cfqRowsN: '{n} entries', cfqMissAmt: 'Amount missing',
+      cfqAddedN: 'Added {n} entries', cfqLeft: '{n} left to fix', cfqUndoAll: 'Undo all', cfqIncludeRow: 'Include this entry',
 
       // Edit balance prompts & toasts
       editNetWorthTitle:   'Edit Net Worth',
@@ -428,12 +430,14 @@ const cashflowModule = (function () {
       cfdNoData:           'Chưa đủ dữ liệu để so sánh',
       cfdPartial:          'Tạm tính đến ngày {d}, so sánh cùng số ngày',
       cfdWhy:              'Vì sao thay đổi so với {m} (cùng kỳ)',
-      cfqLabel: 'Nhập nhanh', cfqPlaceholder: 'Gõ một dòng: phở 55k · grab 48k hôm qua · lương 20tr',
-      cfqHint: 'Enter để lưu · Esc để xóa · hiểu 35k, 1tr2, hôm qua, 5/10, bank, tiền mặt',
+      cfqLabel: 'Nhập nhanh', cfqPlaceholder: 'Gõ một hoặc nhiều khoản: phở 55k · grab 48k hôm qua · lương 20tr',
+      cfqHint: 'Enter để lưu · Shift+Enter xuống dòng · Esc để xóa · nhiều khoản: ngăn bằng dấu phẩy hoặc xuống dòng · hiểu 35k, 1tr2, hôm qua, 5/10',
       cfqSave: 'Lưu', cfqExpense: 'Chi', cfqIncome: 'Thu', cfqToggleType: 'Đổi giữa thu và chi',
       cfqNeedAmount: 'Thêm số tiền, ví dụ 55k hoặc 1tr2', cfqUnsure: 'Chưa chắc nhóm, hãy kiểm tra',
       cfqAssumedK: 'Hiểu là {x}', cfqSaved: 'Đã thêm', cfqUndo: 'Hoàn tác', cfqUndone: 'Đã hoàn tác',
       cfqDate: 'Ngày', cfqCategory: 'Nhóm', cfqSource: 'Nguồn tiền', cfqSaveFail: 'Không lưu được, hãy kiểm tra lại',
+      cfqPick: 'Chọn nhóm cho khoản này', cfqMore: 'Nhóm khác', cfqSaveN: 'Lưu {n} khoản', cfqRowsN: '{n} khoản', cfqMissAmt: 'Thiếu số tiền',
+      cfqAddedN: 'Đã thêm {n} khoản', cfqLeft: 'còn {n} dòng cần sửa', cfqUndoAll: 'Hoàn tác tất cả', cfqIncludeRow: 'Lưu khoản này',
 
       // Edit balance prompts & toasts
       editNetWorthTitle:   'Chỉnh sửa Tổng Tài Sản',
@@ -3462,9 +3466,9 @@ function _restoreAIState() {
   <div class="cfq" id="cfq">
     <div class="cfq-bar">
       <svg class="cfq-ico" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2L3 14h8l-1 8 10-12h-8l1-8z"></path></svg>
-      <input type="text" id="cfq-input" class="cfq-input" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done"
+      <textarea id="cfq-input" class="cfq-input" rows="1" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done"
              aria-label="${_escHtml(_t('cfqLabel'))}" aria-describedby="cfq-hint"
-             data-i18n-placeholder="cfqPlaceholder" placeholder="${_escHtml(_t('cfqPlaceholder'))}" maxlength="160" />
+             data-i18n-placeholder="cfqPlaceholder" placeholder="${_escHtml(_t('cfqPlaceholder'))}" maxlength="1500"></textarea>
       <button type="button" class="cfq-save" id="cfq-save" disabled data-i18n="cfqSave">${_t('cfqSave')}</button>
     </div>
     <div class="cfq-preview" id="cfq-preview" aria-live="polite" hidden></div>
@@ -6121,63 +6125,299 @@ ${_aiShellHTML()}
 
 
   // ── QUICK ENTRY UI BEGIN ────────────────────────────────────
-  var _cfqOv = {};                 // lựa chọn thủ công (loại / nhóm / nguồn / ngày) — giữ khi gõ tiếp
-  var _cfqDraft = null, _cfqUndoTimer = null;
+  // • Nhiều khoản một lần: tách bằng xuống dòng · ; · | · dấu phẩy (không tách "1,5tr" hay "55,000").
+  //   Một dòng chỉ có ngày ("hôm qua", "5/10") là tiêu đề ngày cho các dòng phía sau.
+  // • Khi chưa chắc nhóm: hiện chip gợi ý xếp hạng theo lịch sử gần đây + mức tiền gần giống + giờ trong ngày. Alt+1…4 chọn nhanh.
+  // • Lưu vẫn đi qua ĐÚNG _saveTransaction() / _createTransfer() (không có đường ghi riêng).
+
+  var _cfqOv = {};                 // ghi đè khi chỉ có 1 khoản (giữ khi gõ tiếp)
+  var _cfqRowOv = {};              // ghi đè theo từng dòng (khóa = nội dung dòng)
+  var _cfqOff = {};                // dòng bị bỏ chọn khi lưu nhiều khoản
+  var _cfqState = { mode: 'none', rows: [] };
+  var _cfqDraft = null, _cfqUndoTimer = null, _cfqMoreRow = -1;
+  var _cfqPrev = { keys: {}, pick: {} };   // để chỉ chạy hiệu ứng cho phần MỚI xuất hiện (không nhấp nháy khi gõ)
+  var _CFQ_MAC = /Mac|iPhone|iPad/i.test((typeof navigator !== 'undefined' && navigator.platform) || '');
 
   function _cfqEl(id) { return document.getElementById(id); }
+  function _cfqReset() { _cfqOv = {}; _cfqRowOv = {}; _cfqOff = {}; _cfqMoreRow = -1; }
+  function _cfqFit(input) {
+    if (!input) return;
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 132) + 'px';
+  }
+
+  // ── Tách nhiều khoản ────────────────────────────────────────
+  function _cfqSplit(raw) {
+    var s = String(raw == null ? '' : raw).replace(/\r/g, ''), out = [], buf = '', i, ch;
+    function push(hard) {
+      var t = buf.replace(/\s+/g, ' ').trim(); buf = '';
+      if (t) out.push({ text: t, hard: hard });
+      else if (hard && out.length) out[out.length - 1].hard = true;
+    }
+    for (i = 0; i < s.length; i++) {
+      ch = s.charAt(i);
+      if (ch === '\n' || ch === ';' || ch === '；' || ch === '|' || ch === '·' || ch === '•') push(true);
+      else if (ch === ',' || ch === '，') {
+        if (/\d/.test(s.charAt(i - 1)) && /\d/.test(s.charAt(i + 1))) buf += ch;   // 1,5tr · 55,000
+        else push(false);
+      } else buf += ch;
+    }
+    push(true);
+    return out;
+  }
+
+  function _cfqIsHeader(p) { return !!p && !p.amount && p.dateGiven && !p.desc; }
+
+  /** Chuỗi → danh sách dòng { key, text, hdr, i }. Dòng chỉ có ngày thành tiêu đề cho các dòng sau. */
+  function _cfqRows(raw) {
+    var segs = _cfqSplit(raw), items = [], pend = '', i, p, tx;
+    // 1) "ăn tối, bạn bè 200k": đoạn không có số tiền sau dấu phẩy → dính vào đoạn kế tiếp
+    for (i = 0; i < segs.length; i++) {
+      tx = pend ? pend + ' ' + segs[i].text : segs[i].text;
+      p = _cfqParse(tx);
+      if (p && !p.amount && !_cfqIsHeader(p) && !segs[i].hard && i < segs.length - 1) { pend = tx; continue; }
+      pend = '';
+      items.push({ text: tx, hard: segs[i].hard });
+    }
+    // 2) "phở 55k, ngon": đoạn cuối không có số tiền sau dấu phẩy → dính lại vào dòng trước
+    if (items.length > 1) {
+      var last = items[items.length - 1], pl = _cfqParse(last.text);
+      if (pl && !pl.amount && !_cfqIsHeader(pl) && !items[items.length - 2].hard) {
+        items[items.length - 2].text += ' ' + last.text; items.pop();
+      }
+    }
+    var rows = [], seen = {}, hdr = null;
+    items.forEach(function (it) {
+      var p0 = _cfqParse(it.text);
+      if (!p0) return;
+      if (_cfqIsHeader(p0)) { hdr = { y: p0.y, m: p0.m, d: p0.d }; return; }
+      var base = it.text.toLowerCase();
+      seen[base] = (seen[base] || 0) + 1;
+      rows.push({ key: base + '#' + seen[base], text: it.text, hdr: hdr, i: rows.length });
+    });
+    return rows;
+  }
+
+  function _cfqBuild(row, ov) {
+    var d = _cfqParse(row.text, ov);
+    if (d && d.amount && row.hdr && !d.dateGiven && !(ov && ov.date)) { d.y = row.hdr.y; d.m = row.hdr.m; d.d = row.hdr.d; }
+    return d;
+  }
+  function _cfqCollect(raw) {
+    var rows = _cfqRows(raw), single = rows.length === 1;
+    rows.forEach(function (r) {
+      r.ov = single ? _cfqOv : (_cfqRowOv[r.key] || {});
+      r.d = _cfqBuild(r, r.ov);
+    });
+    return rows.filter(function (r) { return !!r.d; });
+  }
+  function _cfqSaveable(r) {
+    var d = r.d;
+    return !!(d && d.amount > 0 && !_cfqOff[r.key] && !(d.type === 'transfer' && d.from === d.to));
+  }
+  function _cfqFirstUnsureIdx(rows) {
+    for (var i = 0; i < rows.length; i++) {
+      var d = rows[i].d;
+      if (d && d.amount > 0 && d.type !== 'transfer' && !d.sure && !_cfqOff[rows[i].key]) return i;
+    }
+    return -1;
+  }
+
+  // ── Gợi ý nhóm ──────────────────────────────────────────────
+  function _cfqHourPrior(type, id, h) {
+    if (type !== 'expense') return 0;
+    var meal = (h >= 6 && h <= 9) || (h >= 11 && h <= 14) || (h >= 17 && h <= 21);
+    if (id === 'an-uong') return meal ? 1 : 0.3;
+    if (id === 'di-chuyen') return ((h >= 6 && h <= 9) || (h >= 16 && h <= 19)) ? 0.6 : 0.2;
+    if (id === 'tieu-dung-thiet-yeu') return (h >= 17 && h <= 21) ? 0.4 : 0.2;
+    if (id === 'doodad') return h >= 19 ? 0.4 : 0.1;
+    return 0;
+  }
+  /** Top-N nhóm hợp lý nhất: lịch sử 180 ngày (gần hơn nặng hơn) + số tiền gần giống + giờ trong ngày. */
+  function _cfqSuggest(d, limit) {
+    var type = d.type === 'income' ? 'income' : 'expense', now = Date.now(), h = new Date().getHours();
+    var fb = _cfqFallbackCat(type), score = {}, order = [];
+    _cfqCatList(type).forEach(function (c) {
+      if (!_cfqCatOk(type, c.id) || c.id === fb) return;
+      score[c.id] = _cfqHourPrior(type, c.id, h) * 0.5; order.push(c);
+    });
+    var txs = (_data && _data.transactions) || [];
+    for (var i = 0; i < txs.length; i++) {
+      var t = txs[i];
+      if (!t || t.type !== type || !Object.prototype.hasOwnProperty.call(score, t.category)) continue;
+      var ts = t.createdAt || new Date(t.year, (t.month || 1) - 1, t.day || 1).getTime();
+      var age = (now - ts) / 86400000;
+      if (age > 180) continue;
+      var w = age <= 14 ? 1 : (age <= 60 ? 0.6 : 0.3);
+      var ratio = (t.amount > 0 && d.amount > 0) ? Math.max(t.amount, d.amount) / Math.min(t.amount, d.amount) : 99;
+      if (ratio <= 1.5) w *= 1.8; else if (ratio <= 3) w *= 1.2;
+      score[t.category] += w;
+    }
+    return order.map(function (c, idx) { return { c: c, s: score[c.id], i: idx }; })
+      .sort(function (a, b) { return (b.s - a.s) || (a.i - b.i); })
+      .slice(0, limit).map(function (x) { return x.c; });
+  }
+
+  // ── HTML ────────────────────────────────────────────────────
+  function _cfqSplitLabel(s) { var m = /^(\S+)\s+([\s\S]*)$/.exec(String(s)); return m ? [m[1], m[2]] : ['', String(s)]; }
+  function _cfqCatLabel(c) { return _getCFLang() === 'en' ? c.name : (c.nameVI || c.name); }
+
+  function _cfqChips(d, idx, withKeys) {
+    var sug = _cfqSuggest(d, 4), have = {}, open = _cfqMoreRow === idx;
+    var fresh = !_cfqPrev.pick[idx];
+    sug.forEach(function (c) { have[c.id] = 1; });
+    function chip(c, n, delay) {
+      var p = _cfqSplitLabel(_cfqCatLabel(c)), key = n && withKeys;
+      return '<button type="button" class="cfq-chip" style="--i:' + delay + '" data-cfq-pick="' + _escHtml(c.id) + '" data-row="' + idx + '"' +
+        (key ? ' aria-keyshortcuts="Alt+' + n + '"' : '') + '>' +
+        '<span class="cfq-chip-ico" aria-hidden="true">' + _escHtml(p[0]) + '</span><span class="cfq-chip-txt">' + _escHtml(p[1]) + '</span>' +
+        (key ? '<kbd class="cfq-kbd" title="Alt+' + n + '" aria-hidden="true">' + n + '</kbd>' : '') + '</button>';
+    }
+    var h = '<div class="cfq-pick' + (fresh ? ' is-fresh' : '') + '" role="group" aria-label="' + _escHtml(_t('cfqPick')) + '">' +
+      '<div class="cfq-pick-head"><span class="cfq-pick-lbl">' + _escHtml(_t('cfqPick')) + '</span>' +
+      (withKeys ? '<span class="cfq-pick-keys" aria-hidden="true">' + (_CFQ_MAC ? '⌥' : 'Alt') + ' + 1–' + Math.max(1, sug.length) + '</span>' : '') + '</div>';
+    sug.forEach(function (c, k) { h += chip(c, k + 1, k); });
+    h += '<button type="button" class="cfq-chip cfq-chip--more" style="--i:' + sug.length + '" data-cfq-more="' + idx + '" aria-expanded="' + (open ? 'true' : 'false') + '">' +
+      _escHtml(_t('cfqMore')) + '<span aria-hidden="true">' + (open ? ' ▴' : ' ▾') + '</span></button>';
+    if (open) {
+      h += '<div class="cfq-pick-all">';
+      _cfqCatList(d.type === 'income' ? 'income' : 'expense').forEach(function (c) {
+        if (_cfqCatOk(d.type === 'income' ? 'income' : 'expense', c.id) && !have[c.id]) h += chip(c, 0, 0);
+      });
+      h += '</div>';
+    }
+    return h + '</div>';
+  }
+
+  function _cfqTypeBtn(d, idx, small) {
+    var isT = d.type === 'transfer';
+    var label = isT ? _t('cfqTransfer') : (d.type === 'income' ? _t('cfqIncome') : _t('cfqExpense'));
+    var aria = isT ? _t('transferSwap') : _t('cfqToggleType');
+    return '<button type="button" class="cfq-type' + (small ? ' cfq-type--sm' : '') + ' is-' + d.type + '"' + (small ? '' : ' id="cfq-type"') +
+      ' data-cfq-type="' + idx + '" aria-label="' + _escHtml(aria) + '" title="' + _escHtml(aria) + '">' + _escHtml(label) + '</button>';
+  }
+  function _cfqAmountHtml(d, cls) {
+    return '<span class="cfq-amount cfd-num is-' + d.type + (cls ? ' ' + cls : '') + '">' + _escHtml(_formatVNFull(d.amount)) + '</span>';
+  }
+  function _cfqWalletOpts(sel) {
+    var list = TRANSFER_WALLETS.slice();
+    if (list.indexOf(sel) < 0) list.push(sel);
+    return list.map(function (w) {
+      return '<option value="' + w + '"' + (w === sel ? ' selected' : '') + '>' + _escHtml(_walletIcon(w) + ' ' + _walletLabel(w)) + '</option>';
+    }).join('');
+  }
+  function _cfqCatOpts(d) {
+    return _cfqCatList(d.type).map(function (c) {
+      return '<option value="' + _escHtml(c.id) + '"' + (c.id === d.category ? ' selected' : '') + '>' + _escHtml(_cfqCatLabel(c)) + '</option>';
+    }).join('');
+  }
+  function _cfqSrcOpts(sel) {
+    return [['bank', 'sourceBank'], ['cash', 'sourceCash'], ['savings', 'sourceSavings'], ['uncategorized', 'sourceUncategorized']].map(function (r) {
+      return '<option value="' + r[0] + '"' + (r[0] === sel ? ' selected' : '') + '>' + _escHtml(_t(r[1])) + '</option>';
+    }).join('');
+  }
+  function _cfqMetaHtml(d, idx, ids) {
+    function id(n) { return ids ? ' id="cfq-' + n + '"' : ''; }
+    var h = '<input type="date" class="cfq-field"' + id('date') + ' data-f="date" value="' + _cfqIso(d.y, d.m, d.d) + '" aria-label="' + _escHtml(_t('cfqDate')) + '">';
+    if (d.type === 'transfer') {
+      h += '<select class="cfq-field"' + id('from') + ' data-f="from" aria-label="' + _escHtml(_t('labelFrom')) + '">' + _cfqWalletOpts(d.from) + '</select>' +
+        '<span class="cfq-arrow" aria-hidden="true">→</span>' +
+        '<select class="cfq-field"' + id('to') + ' data-f="to" aria-label="' + _escHtml(_t('labelTo')) + '">' + _cfqWalletOpts(d.to) + '</select>';
+    } else {
+      h += '<select class="cfq-field"' + id('cat') + ' data-f="cat" aria-label="' + _escHtml(_t('cfqCategory')) + '">' + _cfqCatOpts(d) + '</select>' +
+        '<select class="cfq-field"' + id('src') + ' data-f="src" aria-label="' + _escHtml(_t('cfqSource')) + '">' + _cfqSrcOpts(d.source) + '</select>';
+    }
+    return h;
+  }
+  function _cfqNotes(d) {
+    var n = [];
+    if (d.type === 'transfer' && d.from === d.to) n.push(_t('transferSame'));
+    if (d.assumedK) n.push(_t('cfqAssumedK').replace('{x}', _formatVNFull(d.amount)));
+    return n.join(' · ');
+  }
+
+  function _cfqSingleHtml(r, idx) {
+    var d = r.d, unsure = d.type !== 'transfer' && !d.sure;
+    var h = '<div class="cfq-item cfq-card' + (unsure ? ' is-unsure' : '') + '" data-row="' + idx + '">' +
+      '<div class="cfq-top">' + _cfqTypeBtn(d, idx, false) + _cfqAmountHtml(d) +
+      (d.desc ? '<span class="cfq-desc">' + _escHtml(d.desc) + '</span>' : '') + '</div>' +
+      '<div class="cfq-meta">' + _cfqMetaHtml(d, idx, true) + '</div>';
+    var notes = _cfqNotes(d);
+    if (notes) h += '<div class="cfq-note">' + _escHtml(notes) + '</div>';
+    if (unsure) h += _cfqChips(d, idx, true);
+    return h + '</div>';
+  }
+
+  function _cfqRowHtml(r, idx, firstUnsure) {
+    var d = r.d, isNew = !_cfqPrev.keys[r.key];
+    if (!(d.amount > 0)) {
+      return '<li class="cfq-item cfq-row is-bad' + (isNew ? ' is-new' : '') + '" data-row="' + idx + '" style="--i:' + idx + '">' +
+        '<span class="cfq-bad-ico" aria-hidden="true">!</span>' +
+        '<span class="cfq-rdesc">' + _escHtml(r.text) + '</span>' +
+        '<span class="cfq-rnote">' + _escHtml(_t('cfqMissAmt')) + '</span></li>';
+    }
+    var off = !!_cfqOff[r.key], unsure = d.type !== 'transfer' && !d.sure && !off;
+    var h = '<li class="cfq-item cfq-row' + (off ? ' is-off' : '') + (unsure ? ' is-unsure' : '') + (isNew ? ' is-new' : '') + '" data-row="' + idx + '" style="--i:' + idx + '">' +
+      '<label class="cfq-check" title="' + _escHtml(_t('cfqIncludeRow')) + '"><input type="checkbox" data-cfq-sel="' + idx + '"' + (off ? '' : ' checked') +
+      ' aria-label="' + _escHtml(_t('cfqIncludeRow')) + '"><span class="cfq-box" aria-hidden="true"></span></label>' +
+      '<div class="cfq-rbody"><div class="cfq-rline">' + _cfqTypeBtn(d, idx, true) +
+      '<span class="cfq-rdesc">' + _escHtml(d.desc || '') + '</span>' + _cfqAmountHtml(d, 'cfq-ramt') + '</div>' +
+      '<div class="cfq-meta">' + _cfqMetaHtml(d, idx, false) + '</div>';
+    var notes = _cfqNotes(d);
+    if (notes) h += '<div class="cfq-note">' + _escHtml(notes) + '</div>';
+    if (unsure) h += _cfqChips(d, idx, idx === firstUnsure);
+    return h + '</div></li>';
+  }
+
+  function _cfqBatchHtml(rows) {
+    var out = 0, inc = 0, first = _cfqFirstUnsureIdx(rows);
+    rows.forEach(function (r) {
+      if (!_cfqSaveable(r)) return;
+      if (r.d.type === 'income') inc += r.d.amount; else if (r.d.type === 'expense') out += r.d.amount;
+    });
+    var sum = [];
+    if (out) sum.push(_escHtml(_t('cfqExpense')) + ' <b>' + _escHtml(_formatVNFull(out)) + '</b>');
+    if (inc) sum.push(_escHtml(_t('cfqIncome')) + ' <b>' + _escHtml(_formatVNFull(inc)) + '</b>');
+    var h = '<div class="cfq-bhead"><span class="cfq-bcount">' + _escHtml(_t('cfqRowsN').replace('{n}', rows.length)) + '</span>' +
+      '<span class="cfq-bsum">' + sum.join(' · ') + '</span></div><ul class="cfq-rows">';
+    rows.forEach(function (r, i) { h += _cfqRowHtml(r, i, first); });
+    return h + '</ul>';
+  }
+
+  function _cfqSetSave(btn, mode, n) {
+    if (!btn) return;
+    btn.textContent = (mode === 'batch') ? _t('cfqSaveN').replace('{n}', n) : _t('cfqSave');
+    btn.disabled = n < 1;
+  }
 
   function _cfqRender() {
     var box = _cfqEl('cfq-preview'), saveBtn = _cfqEl('cfq-save'), input = _cfqEl('cfq-input');
     if (!box || !input) return;
-    var d = _cfqParse(input.value, _cfqOv);
-    _cfqDraft = d;
-    if (!d) { box.hidden = true; box.innerHTML = ''; if (saveBtn) saveBtn.disabled = true; return; }
+    if (!String(input.value).trim()) {
+      _cfqState = { mode: 'none', rows: [] }; _cfqDraft = null; _cfqPrev = { keys: {}, pick: {} };
+      box.hidden = true; box.innerHTML = ''; _cfqSetSave(saveBtn, 'single', 0);
+      return;
+    }
+    var rows = _cfqCollect(input.value);
     box.hidden = false;
-    if (!d.amount) {
+    if (!rows.length || (rows.length === 1 && !rows[0].d.amount)) {
+      _cfqState = { mode: 'need', rows: rows }; _cfqDraft = null; _cfqPrev = { keys: {}, pick: {} };
+      box.className = 'cfq-preview';
       box.innerHTML = '<span class="cfq-need">' + _escHtml(_t('cfqNeedAmount')) + '</span>';
-      if (saveBtn) saveBtn.disabled = true;
+      _cfqSetSave(saveBtn, 'single', 0);
       return;
     }
-    if (d.type === 'transfer') {
-      var wopts = function (sel) {
-        var list = TRANSFER_WALLETS.slice();
-        if (list.indexOf(sel) < 0) list.push(sel);
-        return list.map(function (w) {
-          return '<option value="' + w + '"' + (w === sel ? ' selected' : '') + '>' + _escHtml(_walletIcon(w) + ' ' + _walletLabel(w)) + '</option>';
-        }).join('');
-      };
-      var thtml = '<button type="button" class="cfq-type is-transfer" id="cfq-type" aria-label="' + _escHtml(_t('transferSwap')) + '" title="' + _escHtml(_t('transferSwap')) + '">' + _escHtml(_t('cfqTransfer')) + '</button>' +
-        '<span class="cfq-amount cfd-num">' + _escHtml(_formatVNFull(d.amount)) + '</span>' +
-        '<input type="date" class="cfq-field" id="cfq-date" value="' + _cfqIso(d.y, d.m, d.d) + '" aria-label="' + _escHtml(_t('cfqDate')) + '">' +
-        '<select class="cfq-field" id="cfq-from" aria-label="' + _escHtml(_t('labelFrom')) + '">' + wopts(d.from) + '</select>' +
-        '<span class="cfq-arrow" aria-hidden="true">→</span>' +
-        '<select class="cfq-field" id="cfq-to" aria-label="' + _escHtml(_t('labelTo')) + '">' + wopts(d.to) + '</select>';
-      if (d.desc) thtml += '<span class="cfq-desc">' + _escHtml(d.desc) + '</span>';
-      if (d.from === d.to) thtml += '<span class="cfq-note">' + _escHtml(_t('transferSame')) + '</span>';
-      else if (d.assumedK) thtml += '<span class="cfq-note">' + _escHtml(_t('cfqAssumedK').replace('{x}', _formatVNFull(d.amount))) + '</span>';
-      box.innerHTML = thtml;
-      if (saveBtn) saveBtn.disabled = d.from === d.to;
-      return;
-    }
-    var lang = _getCFLang();
-    var cats = _cfqCatList(d.type).map(function (c) {
-      return '<option value="' + _escHtml(c.id) + '"' + (c.id === d.category ? ' selected' : '') + '>' + _escHtml(lang === 'en' ? c.name : (c.nameVI || c.name)) + '</option>';
-    }).join('');
-    var srcs = [['bank', 'sourceBank'], ['cash', 'sourceCash'], ['savings', 'sourceSavings'], ['uncategorized', 'sourceUncategorized']].map(function (r) {
-      return '<option value="' + r[0] + '"' + (r[0] === d.source ? ' selected' : '') + '>' + _escHtml(_t(r[1])) + '</option>';
-    }).join('');
-    var html = '<button type="button" class="cfq-type is-' + d.type + '" id="cfq-type" aria-label="' + _escHtml(_t('cfqToggleType')) + '">' + _escHtml(d.type === 'income' ? _t('cfqIncome') : _t('cfqExpense')) + '</button>' +
-      '<span class="cfq-amount cfd-num">' + _escHtml(_formatVNFull(d.amount)) + '</span>' +
-      '<input type="date" class="cfq-field" id="cfq-date" value="' + _cfqIso(d.y, d.m, d.d) + '" aria-label="' + _escHtml(_t('cfqDate')) + '">' +
-      '<select class="cfq-field" id="cfq-cat" aria-label="' + _escHtml(_t('cfqCategory')) + '">' + cats + '</select>' +
-      '<select class="cfq-field" id="cfq-src" aria-label="' + _escHtml(_t('cfqSource')) + '">' + srcs + '</select>';
-    if (d.desc) html += '<span class="cfq-desc">' + _escHtml(d.desc) + '</span>';
-    var notes = [];
-    if (!d.sure) notes.push(_t('cfqUnsure'));
-    if (d.assumedK) notes.push(_t('cfqAssumedK').replace('{x}', _formatVNFull(d.amount)));
-    if (notes.length) html += '<span class="cfq-note">' + _escHtml(notes.join(' · ')) + '</span>';
-    box.innerHTML = html;
-    if (saveBtn) saveBtn.disabled = false;
+    var mode = rows.length === 1 ? 'single' : 'batch', prev = { keys: {}, pick: {} };
+    _cfqState = { mode: mode, rows: rows };
+    _cfqDraft = rows[0].d;
+    box.className = 'cfq-preview' + (mode === 'batch' ? ' is-batch' : '');
+    box.innerHTML = mode === 'single' ? _cfqSingleHtml(rows[0], 0) : _cfqBatchHtml(rows);
+    rows.forEach(function (r, i) {
+      prev.keys[r.key] = 1;
+      if (r.d.amount > 0 && r.d.type !== 'transfer' && !r.d.sure && !_cfqOff[r.key]) prev.pick[i] = 1;
+    });
+    _cfqPrev = prev;
+    _cfqSetSave(saveBtn, mode, rows.filter(_cfqSaveable).length);
   }
 
   function _cfqShowDone(html, ms) {
@@ -6188,12 +6428,34 @@ ${_aiShellHTML()}
     _cfqUndoTimer = setTimeout(function () { var el = _cfqEl('cfq-done'); if (el) el.hidden = true; }, ms || 8000);
   }
 
-  /** Lưu: điền sẵn form cũ rồi gọi ĐÚNG _saveTransaction() — cùng kiểm tra, cùng ghi, cùng cập nhật tổng. */
-  function _cfqCommit() {
-    var input = _cfqEl('cfq-input'), d = _cfqDraft;
-    if (!input || !d || !(d.amount > 0) || !_data || !Array.isArray(_data.transactions)) return;
+  // ── Ghi đè / chọn nhóm ──────────────────────────────────────
+  function _cfqSetOv(idx, patch) {
+    var r = _cfqState.rows[idx];
+    if (!r) return;
+    var o = (_cfqRowOv[r.key] = _cfqRowOv[r.key] || {}), single = _cfqState.rows.length === 1;
+    Object.keys(patch).forEach(function (k) {
+      if (patch[k] == null) { delete o[k]; if (single) delete _cfqOv[k]; }
+      else { o[k] = patch[k]; if (single) _cfqOv[k] = patch[k]; }
+    });
+  }
+  function _cfqApplyCat(idx, id) {
+    var r = _cfqState.rows[idx];
+    if (!r || !r.d || !_cfqCatOk(r.d.type, id)) return;
+    _cfqSetOv(idx, { category: id });
+    _cfqMoreRow = -1;
+    _cfqRender();
+  }
+  function _cfqSettle(item) {
+    if (!item) return;
+    item.classList.remove('is-unsure');
+    var p = item.querySelector('.cfq-pick');
+    if (p && p.parentNode) p.parentNode.removeChild(p);
+  }
+
+  // ── Lưu ─────────────────────────────────────────────────────
+  /** Lưu MỘT khoản qua đúng đường cũ. Trả về giao dịch mới hoặc null. */
+  function _cfqCommitDraft(d) {
     if (d.type === 'transfer') {
-      if (d.from === d.to) { _cfqShowDone('<span class="cfq-done-txt cfq-done-txt--err">' + _escHtml(_t('transferSame')) + '</span>', 4000); return; }
       var ttx = _createTransfer({ amount: d.amount, iso: _cfqIso(d.y, d.m, d.d), desc: d.desc, from: d.from, to: d.to });
       try { localStorage.setItem('hub_cf_last_transfer', d.from + '>' + d.to); } catch (_) {}
       if (_currentMonth && (ttx.year !== _currentMonth.year || ttx.month !== _currentMonth.month)) {
@@ -6202,12 +6464,7 @@ ${_aiShellHTML()}
       _debouncedPersist();
       _renderAllViews();
       _updateChart();
-      input.value = ''; _cfqOv = {}; _cfqRender();
-      _cfqShowDone('<span class="cfq-done-txt">' + _escHtml(_t('cfqSaved')) + ': ' + _escHtml(_t('cfqTransfer')) + ' ' +
-        _escHtml(_formatVNFull(ttx.amount)) + ' · ' + _escHtml(_transferRouteText(ttx)) + '</span>' +
-        '<button type="button" class="cfq-undo" id="cfq-undo" data-id="' + _escHtml(ttx.id) + '">' + _escHtml(_t('cfqUndo')) + '</button>', 8000);
-      input.focus();
-      return;
+      return ttx;
     }
     var prevTab = _activeTab, prevEditing = _editingTxId, prevFlag = window.isEditingTransactionMode;
     var before = _data.transactions.length;
@@ -6227,73 +6484,139 @@ ${_aiShellHTML()}
       _activeTab = prevTab; _editingTxId = prevEditing; window.isEditingTransactionMode = prevFlag;
       _populateCategories();
     }
-    if (_data.transactions.length === before + 1) {
-      var tx = _data.transactions[before];
-      _cfqIdxStamp = -1;                       // học lại từ giao dịch mới
-      input.value = ''; _cfqOv = {}; _cfqRender();
-      _cfqShowDone('<span class="cfq-done-txt">' + _escHtml(_t('cfqSaved')) + ': ' + _escHtml(tx.type === 'income' ? _t('cfqIncome') : _t('cfqExpense')) + ' ' +
-        _escHtml(_formatVNFull(tx.amount)) + ' · ' + _escHtml(_categoryDisplayName(tx.category, tx.type)) + '</span>' +
-        '<button type="button" class="cfq-undo" id="cfq-undo" data-id="' + _escHtml(tx.id) + '">' + _escHtml(_t('cfqUndo')) + '</button>', 8000);
-      input.focus();
-    } else {
-      _cfqShowDone('<span class="cfq-done-txt cfq-done-txt--err">' + _escHtml(_t('cfqSaveFail')) + '</span>', 5000);
+    return _data.transactions.length === before + 1 ? _data.transactions[before] : null;
+  }
+
+  function _cfqUndoBtn(ids, all) {
+    return '<button type="button" class="cfq-undo" id="cfq-undo" data-id="' + _escHtml(ids.join(',')) + '">' + _escHtml(all ? _t('cfqUndoAll') : _t('cfqUndo')) + '</button>';
+  }
+
+  function _cfqCommit() {
+    var input = _cfqEl('cfq-input'), st = _cfqState;
+    if (!input || !_data || !Array.isArray(_data.transactions) || (st.mode !== 'single' && st.mode !== 'batch')) return;
+    var rows = st.rows.slice(), todo = [], left = [];
+    rows.forEach(function (r) { (_cfqSaveable(r) ? todo : left).push(r); });
+    if (!todo.length) {
+      var r0 = rows[0];
+      if (rows.length === 1 && r0.d && r0.d.type === 'transfer' && r0.d.from === r0.d.to)
+        _cfqShowDone('<span class="cfq-done-txt cfq-done-txt--err">' + _escHtml(_t('transferSame')) + '</span>', 4000);
+      return;
     }
+    var saved = [];
+    todo.forEach(function (r) {      // r.d đã được chụp sẵn: _renderAllViews() bên trong có thể dựng lại preview
+      var tx = null;
+      try { tx = _cfqCommitDraft(r.d); } catch (err) { console.error('[CashFlow] quick add failed:', err); }
+      if (tx) saved.push(tx); else left.push(r);
+    });
+    _cfqIdxStamp = -1;               // học lại từ giao dịch mới
+    if (!saved.length) { _cfqShowDone('<span class="cfq-done-txt cfq-done-txt--err">' + _escHtml(_t('cfqSaveFail')) + '</span>', 5000); return; }
+
+    left.sort(function (a, b) { return a.i - b.i; });
+    var carry = left.map(function (r) { return _cfqRowOv[r.key] ? JSON.parse(JSON.stringify(_cfqRowOv[r.key])) : null; });
+    _cfqReset();
+    if (left.length) {
+      input.value = left.map(function (r) {
+        var t = r.text;
+        if (r.hdr && r.d && r.d.amount && !r.d.dateGiven) t += ' ' + r.d.d + '/' + r.d.m + '/' + r.d.y;
+        return t;
+      }).join('\n');
+      _cfqRows(input.value).forEach(function (nr, j) { if (carry[j]) _cfqRowOv[nr.key] = carry[j]; });
+    } else input.value = '';
+    _cfqFit(input);
+    _cfqRender();
+
+    var ids = saved.map(function (t) { return t.id; });
+    if (saved.length === 1 && !left.length) {
+      var tx = saved[0], msg;
+      if (tx.type === 'transfer') msg = _t('cfqSaved') + ': ' + _t('cfqTransfer') + ' ' + _formatVNFull(tx.amount) + ' · ' + _transferRouteText(tx);
+      else msg = _t('cfqSaved') + ': ' + (tx.type === 'income' ? _t('cfqIncome') : _t('cfqExpense')) + ' ' + _formatVNFull(tx.amount) + ' · ' + _categoryDisplayName(tx.category, tx.type);
+      _cfqShowDone('<span class="cfq-done-txt">' + _escHtml(msg) + '</span>' + _cfqUndoBtn(ids, false), 8000);
+    } else {
+      var out = 0, inc = 0, nt = 0, parts = [];
+      saved.forEach(function (t) { if (t.type === 'income') inc += t.amount; else if (t.type === 'transfer') nt++; else out += t.amount; });
+      if (out) parts.push(_t('cfqExpense') + ' ' + _formatVNFull(out));
+      if (inc) parts.push(_t('cfqIncome') + ' ' + _formatVNFull(inc));
+      if (nt) parts.push(_t('cfqTransfer') + ' ×' + nt);
+      var m2 = _t('cfqAddedN').replace('{n}', saved.length) + (parts.length ? ' · ' + parts.join(' · ') : '');
+      if (left.length) m2 += ' — ' + _t('cfqLeft').replace('{n}', left.length);
+      _cfqShowDone('<span class="cfq-done-txt">' + _escHtml(m2) + '</span>' + _cfqUndoBtn(ids, true), left.length ? 12000 : 9000);
+    }
+    input.focus();
   }
 
   function _bindQuickEntry() {
     var input = _qs('#cfq-input');
     if (!input) return;
     var timer = null;
+    _cfqFit(input);
     input.addEventListener('input', function () {
+      _cfqFit(input);
       clearTimeout(timer);
       timer = setTimeout(_cfqRender, 90);
       var done = _cfqEl('cfq-done'); if (done) done.hidden = true;
     });
     input.addEventListener('keydown', function (e) {
-      if (e.isComposing) return;                      // đang gõ dấu tiếng Việt: chưa xử lý
-      if (e.key === 'Enter') { e.preventDefault(); clearTimeout(timer); _cfqRender(); _cfqCommit(); }
-      else if (e.key === 'Escape' && input.value) { e.stopPropagation(); input.value = ''; _cfqOv = {}; _cfqRender(); }
+      if (e.isComposing || e.keyCode === 229) return;       // đang gõ dấu tiếng Việt: chưa xử lý
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); clearTimeout(timer); _cfqRender(); _cfqCommit(); return; }
+      if (e.altKey && !e.ctrlKey && !e.metaKey && /^Digit[1-9]$/.test(e.code)) {   // Alt+1…4: chọn nhóm gợi ý cho dòng chưa chắc đầu tiên
+        clearTimeout(timer); _cfqRender();
+        var fi = _cfqFirstUnsureIdx(_cfqState.rows);
+        if (fi < 0) return;
+        var pick = _cfqSuggest(_cfqState.rows[fi].d, 4)[+e.code.slice(5) - 1];
+        if (pick) { e.preventDefault(); _cfqApplyCat(fi, pick.id); }
+        return;
+      }
+      if (e.key === 'Escape' && input.value) { e.stopPropagation(); input.value = ''; _cfqReset(); _cfqFit(input); _cfqRender(); }
     });
     var save = _qs('#cfq-save');
     if (save) save.addEventListener('click', function () { clearTimeout(timer); _cfqRender(); _cfqCommit(); input.focus(); });
 
     var box = _qs('#cfq-preview');
     if (box) {
+      var refocus = function (sel) { var f = box.querySelector(sel); if (f) f.focus(); };
       box.addEventListener('change', function (e) {
-        var t = e.target;
-        if (!_cfqDraft) return;
-        if (t.id === 'cfq-cat') { _cfqOv.category = t.value; _cfqDraft.category = t.value; _cfqDraft.sure = true; var n = box.querySelector('.cfq-note'); if (n && !_cfqDraft.assumedK) n.remove(); }
-        else if (t.id === 'cfq-src') { _cfqOv.source = t.value; _cfqDraft.source = t.value; }
-        else if (t.id === 'cfq-from' || t.id === 'cfq-to') {
-          var fe = _cfqEl('cfq-from'), te = _cfqEl('cfq-to');
-          if (fe && te) { _cfqOv.from = fe.value; _cfqOv.to = te.value; _cfqDraft.from = fe.value; _cfqDraft.to = te.value; }
-          _cfqRender();
-        }
-        else if (t.id === 'cfq-date' && t.value) {
-          _cfqOv.date = t.value;
-          var p = t.value.split('-'); _cfqDraft.y = +p[0]; _cfqDraft.m = +p[1]; _cfqDraft.d = +p[2];
+        var t = e.target, item = t.closest ? t.closest('.cfq-item') : null;
+        if (!item) return;
+        var idx = +item.getAttribute('data-row'), r = _cfqState.rows[idx];
+        if (!r || !r.d) return;
+        var d = r.d, f = t.getAttribute('data-f');
+        if (t.hasAttribute('data-cfq-sel')) { _cfqOff[r.key] = !t.checked; _cfqRender(); refocus('[data-cfq-sel="' + idx + '"]'); return; }
+        if (f === 'cat') { _cfqSetOv(idx, { category: t.value }); d.category = t.value; d.sure = true; _cfqSettle(item); }
+        else if (f === 'src') { _cfqSetOv(idx, { source: t.value }); d.source = t.value; }
+        else if (f === 'date' && t.value) { _cfqSetOv(idx, { date: t.value }); var p = t.value.split('-'); d.y = +p[0]; d.m = +p[1]; d.d = +p[2]; }
+        else if (f === 'from' || f === 'to') {
+          var fe = item.querySelector('[data-f="from"]'), te = item.querySelector('[data-f="to"]');
+          if (fe && te) _cfqSetOv(idx, { from: fe.value, to: te.value });
+          _cfqRender(); refocus('.cfq-item[data-row="' + idx + '"] [data-f="' + f + '"]');
         }
       });
       box.addEventListener('click', function (e) {
-        var b = e.target.closest ? e.target.closest('#cfq-type') : null;
-        if (!b || !_cfqDraft) return;
-        if (_cfqDraft.type === 'transfer') {            // đổi chiều: từ ↔ đến
-          _cfqOv.from = _cfqDraft.to; _cfqOv.to = _cfqDraft.from;
-          _cfqRender();
-          var sb = _cfqEl('cfq-type'); if (sb) sb.focus();
+        var el = e.target;
+        if (!el || !el.closest) return;
+        var pick = el.closest('[data-cfq-pick]');
+        if (pick) { _cfqApplyCat(+pick.getAttribute('data-row'), pick.getAttribute('data-cfq-pick')); input.focus(); return; }
+        var more = el.closest('[data-cfq-more]');
+        if (more) {
+          var ri = +more.getAttribute('data-cfq-more');
+          _cfqMoreRow = _cfqMoreRow === ri ? -1 : ri;
+          _cfqRender(); refocus('[data-cfq-more="' + ri + '"]');
           return;
         }
-        _cfqOv.type = _cfqDraft.type === 'income' ? 'expense' : 'income';
-        delete _cfqOv.category;
-        _cfqRender();
-        var nb = _cfqEl('cfq-type'); if (nb) nb.focus();
+        var tb = el.closest('[data-cfq-type]');
+        if (tb) {
+          var ti = +tb.getAttribute('data-cfq-type'), tr = _cfqState.rows[ti];
+          if (!tr || !tr.d) return;
+          if (tr.d.type === 'transfer') _cfqSetOv(ti, { from: tr.d.to, to: tr.d.from });     // đổi chiều
+          else _cfqSetOv(ti, { type: tr.d.type === 'income' ? 'expense' : 'income', category: null });
+          _cfqRender(); refocus('[data-cfq-type="' + ti + '"]');
+        }
       });
     }
     var doneBox = _qs('#cfq-done');
     if (doneBox) doneBox.addEventListener('click', function (e) {
       var u = e.target.closest ? e.target.closest('#cfq-undo') : null;
       if (!u) return;
-      _deleteTransaction(u.getAttribute('data-id'));
+      String(u.getAttribute('data-id') || '').split(',').forEach(function (id) { if (id) _deleteTransaction(id); });
       _cfqIdxStamp = -1;
       _cfqShowDone('<span class="cfq-done-txt">' + _escHtml(_t('cfqUndone')) + '</span>', 3000);
       input.focus();
