@@ -72,6 +72,12 @@ const timeManagementModule = (function () {
     chev:   TL_SVG('<path d="m9 6 6 6-6 6"/>')
   };
   let _tl = { q: '', tag: 'all', range: 'all', status: 'all', pastOpen: false };
+  /* Set Time v2 — constants & state */
+  const SB_DURS = [15, 30, 45, 60, 90, 120, 180];
+  const SB_WEEKS = [1, 2, 4, 8, 12];
+  const SB_PRESETS = [['once', 'Just this day', []], ['weekdays', 'Weekdays', [1, 2, 3, 4, 5]], ['weekends', 'Weekends', [6, 0]], ['all', 'Every day', [0, 1, 2, 3, 4, 5, 6]]];
+  const SB_DAYS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [0, 'Sun']];
+  let _sb = { tag: 'work', days: [], weeks: 1, ov: {}, dur: 30 };
 
   const ICON = {
     brush:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.37 2.63 14 7l-1.59-1.59a2 2 0 0 0-2.82 0L8 7l9 9 1.59-1.59a2 2 0 0 0 0-2.82L17 10l4.37-4.37a2.12 2.12 0 1 0-3-3Z"/><path d="M9 8c-2 3-4 3.5-7 4l8 10c2-1 6-5 6-7"/><path d="M14.5 17.5 4.5 15"/></svg>',
@@ -127,12 +133,11 @@ const timeManagementModule = (function () {
   let _editingId = null;
   let _confirmCb = null;
   let _savedRange = null;
-  let _stRows = null;               // Set-Time preview rows (null = not previewed yet)
   let _lastToday = _todayStr();
   let _pendingScroll = null;        // minutes to scroll to after next day-grid build
 
   let _nowTimer = null, _focusTimer = null, _saveTimer = null, _toastTimer = null, _tlTimer = null;
-  let _audioTimer = null, _ctx = null, _master = null, _sched = {}, _buses = [], _cueTimers = [];
+  let _audioTimer = null, _ctx = null, _master = null, _sched = {}, _buses = [], _cueTimers = [], _sample = null;
 
   const _modalStack = [];
   const _returnFocus = new Map();
@@ -550,13 +555,37 @@ const timeManagementModule = (function () {
   /* ============================================================
      HTML
      ============================================================ */
-  /* One settings row: label + hint, optional lead-time select, global toggle */
-  function _cueRow(id, label, hint, selectId) {
-    const sel = selectId
-      ? '<select class="hub-tm-input hub-tm-input--sm hub-tm-lead" id="' + selectId + '" aria-label="Minutes">' + LEAD_CHOICES.map(function (n) { return '<option value="' + n + '">' + n + ' min</option>'; }).join('') + '</select>'
-      : '';
-    return '<div class="hub-tm-cue-row"><div class="hub-tm-cue-text"><span class="hub-tm-settings-label">' + label + '</span><span class="hub-tm-hint">' + hint + '</span></div>' +
-           '<div class="hub-tm-cue-ctrl">' + sel + '<label class="toggle-switch"><input type="checkbox" id="' + id + '" aria-label="' + label + '"><span class="toggle-track"><span class="toggle-thumb"></span></span></label></div></div>';
+  /* ---- Sound dialog building blocks ("Cue sheet") ---- */
+  const _SVG_PLAY = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l13-7.5z" fill="currentColor"/></svg>';
+  function _tog(id, label) {
+    return '<label class="toggle-switch"><input type="checkbox" id="' + id + '" aria-label="' + label + '"><span class="toggle-track"><span class="toggle-thumb"></span></span></label>';
+  }
+  /** Lead time as a 1 / 2 / 5 / 10 min radio group: one tap, no dropdown. */
+  function _seg(name, legend) {
+    return '<fieldset class="hub-tm-seg"><legend class="hub-tm-sr">' + legend + '</legend>' + LEAD_CHOICES.map(function (n) {
+      return '<label><input type="radio" name="' + name + '" value="' + n + '"><span>' + n + '<small>min</small></span></label>';
+    }).join('') + '</fieldset>';
+  }
+  function _voiceCard(id, name, sub, art, mod) {
+    return '<label class="hub-tm-voice' + (mod ? ' ' + mod : '') + '"><input type="radio" name="tm-audio-voice" value="' + id + '">' +
+      '<span class="hub-tm-voice-face"><svg class="hub-tm-voice-art" viewBox="0 0 28 20" aria-hidden="true">' + art + '</svg>' +
+      '<span class="hub-tm-voice-name">' + name + '</span><span class="hub-tm-voice-sub">' + sub + '</span></span></label>';
+  }
+  /** One moment of a block: node on the rail · title · melody glyph · ▶ audition · on/off. */
+  function _station(type, title, when, hint, leadName, tag) {
+    const tagEl = tag || 'li';
+    const body = '<span class="hub-tm-st-node" aria-hidden="true"></span>' +
+      '<div class="hub-tm-st-main">' +
+        '<div class="hub-tm-st-head"><span class="hub-tm-st-title">' + title + '</span><span class="hub-tm-st-when">' + when + '</span>' +
+          '<svg class="hub-tm-roll" data-roll="' + type + '" viewBox="0 0 72 26" aria-hidden="true"></svg></div>' +
+        '<p class="hub-tm-hint" id="tm-hint-' + type + '">' + hint + '</p>' +
+        (leadName ? _seg(leadName, title + ': minutes') : '') +
+      '</div>' +
+      '<div class="hub-tm-st-ctrl">' +
+        '<button type="button" class="hub-tm-play" data-preview="' + type + '" aria-label="Play ' + title.toLowerCase() + ' sound">' + _SVG_PLAY + '</button>' +
+        _tog('tm-cue-' + type, title) +
+      '</div>';
+    return '<' + tagEl + ' class="hub-tm-st" data-cue="' + type + '">' + body + '</' + tagEl + '>';
   }
 
   function _buildHTML() {
@@ -750,40 +779,60 @@ const timeManagementModule = (function () {
         '</div>' +
       '</div>' +
 
-      /* ── Settings · Sound design ── */
+      /* ── Settings · Sound alerts (cue sheet) ── */
       '<div class="hub-tm-overlay" id="hub-tm-settings-modal" aria-hidden="true">' +
-        '<div class="hub-tm-dialog hub-tm-dialog--lg" role="dialog" aria-modal="true" aria-labelledby="hub-tm-settings-heading">' +
+        '<div class="hub-tm-dialog hub-tm-dialog--lg hub-tm-snd" id="tm-snd" role="dialog" aria-modal="true" aria-labelledby="hub-tm-settings-heading">' +
           '<div class="hub-tm-dialog-head"><h3 class="hub-tm-dialog-title" id="hub-tm-settings-heading">Sound alerts</h3><button type="button" class="hub-tm-dialog-close" data-close aria-label="Close">&times;</button></div>' +
           '<div class="hub-tm-dialog-body">' +
-            _cueRow('tm-audio-enabled', 'Sound alerts', 'Each tag has its own melody, played by the theme’s own instrument.') +
+            '<section class="hub-tm-snd-master" id="tm-snd-master">' +
+              '<div class="hub-tm-snd-master-text">' +
+                '<label class="hub-tm-snd-master-title" for="tm-audio-enabled"><span class="hub-tm-snd-dot" aria-hidden="true"></span>Sound alerts</label>' +
+                '<p class="hub-tm-hint" id="hub-tm-audio-status" aria-live="polite"></p>' +
+              '</div>' +
+              '<label class="toggle-switch"><input type="checkbox" id="tm-audio-enabled"><span class="toggle-track"><span class="toggle-thumb"></span></span></label>' +
+            '</section>' +
             '<div class="hub-tm-set-group" id="tm-audio-options">' +
-              '<div class="hub-tm-field-row">' +
-                '<div class="hub-tm-field"><label for="tm-audio-voice">Instrument</label><select class="hub-tm-input" id="tm-audio-voice">' +
-                  '<option value="auto">Follow theme</option><option value="cyber">Cyberpunk · radar synth</option><option value="solar">Solar Zen · singing bowl</option><option value="lofi">Lo-fi · soft keys</option><option value="terminal">Optimize · terminal beep</option>' +
-                '</select></div>' +
-                '<div class="hub-tm-field"><label for="tm-audio-volume">Volume <span id="tm-audio-volume-val"></span></label><input type="range" class="hub-tm-range" id="tm-audio-volume" min="0" max="100" step="5"></div>' +
-              '</div>' +
-              '<h4 class="hub-tm-set-title">When to chime</h4>' +
-              _cueRow('tm-cue-pre', 'Heads-up before a block starts', 'One soft note.', 'tm-pre-mins') +
-              _cueRow('tm-cue-start', 'Block starts', 'The tag’s melody, rising.') +
-              _cueRow('tm-cue-warn', 'Wrap-up before a block ends', 'Two soft pings. Skipped on short blocks.', 'tm-warn-mins') +
-              _cueRow('tm-cue-end', 'Block ends', 'The tag’s melody, falling and resolving.') +
-              _cueRow('tm-cue-handover', 'Smooth handover', 'When one block ends exactly as the next begins, play a single combined cue instead of two.') +
-              '<h4 class="hub-tm-set-title">Preview</h4>' +
-              '<div class="hub-tm-field"><label for="tm-preview-tag">Melody of tag</label><select class="hub-tm-input" id="tm-preview-tag"></select></div>' +
-              '<div class="hub-tm-preview-btns">' +
-                '<button type="button" class="hub-tm-btn hub-tm-btn--outline" data-preview="pre">Heads-up</button>' +
-                '<button type="button" class="hub-tm-btn hub-tm-btn--outline" data-preview="start">Start</button>' +
-                '<button type="button" class="hub-tm-btn hub-tm-btn--outline" data-preview="warn">Wrap-up</button>' +
-                '<button type="button" class="hub-tm-btn hub-tm-btn--outline" data-preview="end">End</button>' +
-                '<button type="button" class="hub-tm-btn hub-tm-btn--outline" data-preview="handover">Handover</button>' +
-              '</div>' +
-              '<h4 class="hub-tm-set-title">Your own sounds (optional)</h4>' +
-              _cueRow('tm-audio-custom', 'Use my own audio files for start and end', 'Replaces the synthesised start / end / handover cues. Needs an internet link to an audio file.') +
-              '<div class="hub-tm-field"><label for="tm-audio-start-url">Start sound URL</label><div class="hub-tm-save-row"><input type="text" class="hub-tm-input" id="tm-audio-start-url" placeholder="https://example.com/start.mp3" maxlength="500"><button type="button" class="hub-tm-btn hub-tm-btn--outline" data-test-sound="start" aria-label="Test start sound">Test</button></div></div>' +
-              '<div class="hub-tm-field"><label for="tm-audio-end-url">End sound URL</label><div class="hub-tm-save-row"><input type="text" class="hub-tm-input" id="tm-audio-end-url" placeholder="https://example.com/end.mp3" maxlength="500"><button type="button" class="hub-tm-btn hub-tm-btn--outline" data-test-sound="end" aria-label="Test end sound">Test</button></div></div>' +
+              '<section class="hub-tm-snd-sec" aria-labelledby="tm-snd-h-inst">' +
+                '<h4 class="hub-tm-snd-h" id="tm-snd-h-inst">Instrument</h4>' +
+                '<fieldset class="hub-tm-voices"><legend class="hub-tm-sr">Instrument</legend>' +
+                  _voiceCard('auto', 'Follow theme', '<span data-auto-now></span>', '<circle cx="14" cy="10" r="7"/><path d="M14 3a7 7 0 0 1 0 14z" fill="currentColor"/>', 'hub-tm-voice--auto') +
+                  _voiceCard('cyber', 'Radar synth', 'Cyberpunk', '<path d="M2 16 10 4v12l8-12v12l8-12"/>') +
+                  _voiceCard('solar', 'Singing bowl', 'Solar Zen', '<circle cx="14" cy="10" r="3"/><circle cx="14" cy="10" r="6.2" opacity=".65"/><circle cx="14" cy="10" r="9.2" opacity=".35"/>') +
+                  _voiceCard('lofi', 'Soft keys', 'Lo-fi Twilight', '<path d="M2 14 8 6l6 8 6-8 6 8"/>') +
+                  _voiceCard('terminal', 'Terminal beep', 'Optimize', '<path d="M2 16V6h6v10h6V6h6v10h6V6"/>') +
+                '</fieldset>' +
+                '<div class="hub-tm-vol"><label for="tm-audio-volume">Volume</label><input type="range" class="hub-tm-range" id="tm-audio-volume" min="0" max="100" step="5" aria-describedby="tm-audio-volume-val"><output id="tm-audio-volume-val" for="tm-audio-volume"></output></div>' +
+                '<p class="hub-tm-hint">Choosing an instrument or moving the volume plays a short sample.</p>' +
+              '</section>' +
+              '<section class="hub-tm-snd-sec" aria-labelledby="tm-snd-h-sheet">' +
+                '<div class="hub-tm-snd-sec-head">' +
+                  '<div><h4 class="hub-tm-snd-h" id="tm-snd-h-sheet">When it rings</h4><p class="hub-tm-hint">What every block sounds like, in order. Each tag has its own melody.</p></div>' +
+                  '<button type="button" class="hub-tm-btn hub-tm-btn--outline hub-tm-sample" id="tm-sample">' + _SVG_PLAY + '<span>Hear a sample block</span></button>' +
+                '</div>' +
+                '<fieldset class="hub-tm-melodies" id="tm-preview-tags"><legend>Melody of</legend></fieldset>' +
+                '<ol class="hub-tm-stations">' +
+                  _station('pre', 'Heads-up', 'before it starts', 'One soft note. Skipped if it would land inside another block.', 'tm-pre-mins') +
+                  _station('start', 'Block starts', 'on the minute', 'The tag’s melody, rising.') +
+                  _station('warn', 'Wrap-up', 'before it ends', '<span id="tm-warn-note">Two soft pings.</span>', 'tm-warn-mins') +
+                  _station('end', 'Block ends', 'on the minute', 'The tag’s melody, falling and resolving to a low note.') +
+                '</ol>' +
+                '<div class="hub-tm-ho" id="tm-ho" data-cue="handover">' +
+                  '<div class="hub-tm-st-main"><div class="hub-tm-st-head"><span class="hub-tm-st-title">Smooth handover</span><span class="hub-tm-st-when">back-to-back blocks</span>' +
+                    '<span class="hub-tm-ho-art" aria-hidden="true"><i></i><i></i></span></div>' +
+                    '<p class="hub-tm-hint">When a block ends exactly as the next begins, one combined cue replaces the end and start sounds.</p>' +
+                  '</div>' +
+                  '<div class="hub-tm-st-ctrl"><button type="button" class="hub-tm-play" data-preview="handover" aria-label="Play handover sound">' + _SVG_PLAY + '</button>' + _tog('tm-cue-handover', 'Smooth handover') + '</div>' +
+                '</div>' +
+              '</section>' +
+              '<details class="hub-tm-snd-adv" id="tm-snd-adv">' +
+                '<summary>Use my own audio files</summary>' +
+                '<div class="hub-tm-snd-adv-body">' +
+                  '<div class="hub-tm-cue-row"><div class="hub-tm-cue-text"><label class="hub-tm-settings-label" for="tm-audio-custom">Replace start / end / handover</label><span class="hub-tm-hint">Needs an internet link to an audio file. Heads-up and wrap-up keep the instrument sound.</span></div>' + _tog('tm-audio-custom', 'Use my own audio files for start and end') + '</div>' +
+                  '<div class="hub-tm-field"><label for="tm-audio-start-url">Start sound URL</label><div class="hub-tm-save-row"><input type="text" class="hub-tm-input" id="tm-audio-start-url" placeholder="https://example.com/start.mp3" maxlength="500"><button type="button" class="hub-tm-btn hub-tm-btn--outline" data-test-sound="start" aria-label="Test start sound">Test</button></div></div>' +
+                  '<div class="hub-tm-field"><label for="tm-audio-end-url">End sound URL</label><div class="hub-tm-save-row"><input type="text" class="hub-tm-input" id="tm-audio-end-url" placeholder="https://example.com/end.mp3" maxlength="500"><button type="button" class="hub-tm-btn hub-tm-btn--outline" data-test-sound="end" aria-label="Test end sound">Test</button></div></div>' +
+                '</div>' +
+              '</details>' +
             '</div>' +
-            '<p class="hub-tm-hint" id="hub-tm-audio-status"></p>' +
             '<p class="hub-tm-error" id="hub-tm-settings-error" role="alert"></p>' +
           '</div>' +
           '<div class="hub-tm-dialog-foot"><button type="button" class="hub-tm-btn hub-tm-btn--outline" id="tm-btn-settings-cancel">Cancel</button><button type="button" class="hub-tm-btn hub-tm-btn--primary" id="tm-btn-settings-save">Save settings</button></div>' +
@@ -801,25 +850,58 @@ const timeManagementModule = (function () {
 
       /* ── Set Time ── */
       '<div class="hub-tm-overlay" id="hub-tm-set-time-modal" aria-hidden="true">' +
-        '<div class="hub-tm-dialog hub-tm-dialog--lg" role="dialog" aria-modal="true" aria-labelledby="hub-tm-settime-heading">' +
-          '<div class="hub-tm-dialog-head"><h3 class="hub-tm-dialog-title" id="hub-tm-settime-heading">Set Time Block</h3><button type="button" class="hub-tm-dialog-close" data-close aria-label="Close">&times;</button></div>' +
-          '<div class="hub-tm-dialog-body">' +
-            '<div class="hub-tm-field-row">' +
-              '<div class="hub-tm-field"><label for="tm-input-start">Start time</label><input type="time" class="hub-tm-input" id="tm-input-start" value="09:00"></div>' +
-              '<div class="hub-tm-field"><label for="tm-input-end">End time</label><input type="time" class="hub-tm-input" id="tm-input-end" value="09:30"></div>' +
-            '</div>' +
-            '<fieldset class="hub-tm-field"><legend>Repeat on</legend><div class="hub-tm-day-checks" id="tm-day-checks">' +
-              [['mon', 1, 'Mon'], ['tue', 2, 'Tue'], ['wed', 3, 'Wed'], ['thu', 4, 'Thu'], ['fri', 5, 'Fri'], ['sat', 6, 'Sat'], ['sun', 0, 'Sun']].map(function (d) {
-                return '<label class="hub-tm-day-check"><input type="checkbox" value="' + d[1] + '"><span>' + d[2] + '</span></label>';
-              }).join('') +
-            '</div></fieldset>' +
-            '<div class="hub-tm-field"><label for="tm-input-weeks">For how long</label><select class="hub-tm-input" id="tm-input-weeks"><option value="1">This week (7 days from the selected date)</option><option value="2">2 weeks</option><option value="4">4 weeks</option><option value="8">8 weeks</option></select></div>' +
-            '<p class="hub-tm-hint">With no day ticked, only the selected date is used. Tag: <strong id="tm-settime-tag"></strong></p>' +
-            '<div><button type="button" class="hub-tm-btn hub-tm-btn--outline" id="tm-btn-preview">Preview</button></div>' +
-            '<p class="hub-tm-error" id="hub-tm-settime-error" role="alert"></p>' +
-            '<div class="hub-tm-preview-wrap"><table class="hub-tm-preview-table"><thead><tr><th>Date</th><th>Start</th><th>End</th><th>Length</th><th><span class="hub-tm-sr-only">Remove</span></th></tr></thead><tbody id="tm-preview-tbody"></tbody></table></div>' +
+        '<div class="hub-tm-dialog hub-tm-dialog--st" role="dialog" aria-modal="true" aria-labelledby="hub-tm-settime-heading">' +
+          '<div class="hub-tm-dialog-head hub-tm-sb-head">' +
+            '<span class="hub-tm-sb-badge">' + ICON.repeat + '</span>' +
+            '<div class="hub-tm-sb-headtext"><h3 class="hub-tm-dialog-title" id="hub-tm-settime-heading">Set Time Block</h3><p class="hub-tm-sb-sub">Repeat a time window across your calendar</p></div>' +
+            '<button type="button" class="hub-tm-dialog-close" data-close aria-label="Close">&times;</button>' +
           '</div>' +
-          '<div class="hub-tm-dialog-foot"><button type="button" class="hub-tm-btn hub-tm-btn--primary" id="tm-btn-apply-time">Apply</button></div>' +
+          '<div class="hub-tm-sb-body">' +
+            '<div class="hub-tm-sb-pane hub-tm-sb-controls">' +
+              '<section class="hub-tm-sb-sec"><h4 class="hub-tm-sb-h"><i>1</i>Time</h4>' +
+                '<div class="hub-tm-sb-times">' +
+                  '<div class="hub-tm-field"><label for="tm-input-start">Starts</label><input type="time" class="hub-tm-input" id="tm-input-start" value="09:00"></div>' +
+                  '<span class="hub-tm-sb-dur" id="tm-sb-dur" aria-live="polite">30m</span>' +
+                  '<div class="hub-tm-field"><label for="tm-input-end">Ends</label><input type="time" class="hub-tm-input" id="tm-input-end" value="09:30"></div>' +
+                '</div>' +
+                '<div class="hub-tm-sb-chips" id="tm-sb-durs" role="group" aria-label="Quick duration">' +
+                  SB_DURS.map(function (m) { return '<button type="button" data-sb-dur="' + m + '" aria-pressed="false">' + _fmtDur(m) + '</button>'; }).join('') +
+                '</div>' +
+                '<div class="hub-tm-sb-day"><div class="hub-tm-sb-track" id="tm-sb-track" aria-hidden="true"></div><div class="hub-tm-sb-ticks" aria-hidden="true"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div></div>' +
+                '<p class="hub-tm-hint" id="tm-sb-bar-cap"></p>' +
+              '</section>' +
+              '<section class="hub-tm-sb-sec"><h4 class="hub-tm-sb-h"><i>2</i>Repeat</h4>' +
+                '<div class="hub-tm-sb-chips" id="tm-sb-presets" role="group" aria-label="Repeat presets">' +
+                  SB_PRESETS.map(function (p) { return '<button type="button" data-sb-preset="' + p[0] + '" aria-pressed="false">' + p[1] + '</button>'; }).join('') +
+                '</div>' +
+                '<fieldset class="hub-tm-field"><legend class="hub-tm-sr-only">Repeat on</legend><div class="hub-tm-sb-days" id="tm-day-checks">' +
+                  SB_DAYS.map(function (d) { return '<label class="hub-tm-day-check"><input type="checkbox" value="' + d[0] + '"><span>' + d[1] + '</span></label>'; }).join('') +
+                '</div></fieldset>' +
+                '<p class="hub-tm-hint" id="tm-sb-repeat-cap"></p>' +
+              '</section>' +
+              '<section class="hub-tm-sb-sec"><h4 class="hub-tm-sb-h"><i>3</i>For how long</h4>' +
+                '<div class="hub-tm-tl-seg" id="tm-sb-weeks" role="group" aria-label="Span">' +
+                  SB_WEEKS.map(function (w) { return '<button type="button" data-sb-weeks="' + w + '" aria-pressed="false">' + w + ' wk' + (w > 1 ? 's' : '') + '</button>'; }).join('') +
+                '</div>' +
+                '<p class="hub-tm-hint" id="tm-sb-span-cap"></p>' +
+              '</section>' +
+              '<section class="hub-tm-sb-sec"><h4 class="hub-tm-sb-h"><i>4</i>Details</h4>' +
+                '<div class="hub-tm-sb-tags" id="tm-sb-tags" role="group" aria-label="Tag"></div>' +
+                '<div class="hub-tm-field"><label class="hub-tm-sr-only" for="tm-sb-title">Title</label><input type="text" class="hub-tm-input" id="tm-sb-title" maxlength="120" placeholder="Title (optional)" autocomplete="off"></div>' +
+              '</section>' +
+            '</div>' +
+            '<div class="hub-tm-sb-pane hub-tm-sb-preview">' +
+              '<div class="hub-tm-sb-phead"><h4 class="hub-tm-sb-h">Preview</h4><button type="button" class="hub-tm-sb-link" data-sb-reset hidden>Reset edits</button></div>' +
+              '<div class="hub-tm-tl-stats hub-tm-sb-stats" id="tm-sb-stats"></div>' +
+              '<div class="hub-tm-sb-cal" id="tm-sb-cal"></div>' +
+              '<ul class="hub-tm-sb-legend" aria-hidden="true"><li><i class="hub-tm-sb-sw is-on"></i>Will be added</li><li><i class="hub-tm-sb-sw is-conflict"></i>Time taken · skipped</li><li><i class="hub-tm-sb-sw is-off"></i>Skipped by you</li></ul>' +
+              '<p class="hub-tm-error" id="hub-tm-settime-error" role="alert"></p>' +
+            '</div>' +
+          '</div>' +
+          '<div class="hub-tm-dialog-foot hub-tm-dialog-foot--split">' +
+            '<p class="hub-tm-sb-foot">Tip: click any date in the preview to add or skip it.</p>' +
+            '<div class="hub-tm-sb-actions"><button type="button" class="hub-tm-btn hub-tm-btn--outline" data-close>Cancel</button><button type="button" class="hub-tm-btn hub-tm-btn--primary" id="tm-btn-apply-time">Add blocks</button></div>' +
+          '</div>' +
         '</div>' +
       '</div>' +
 
@@ -968,6 +1050,7 @@ const timeManagementModule = (function () {
     el.setAttribute('aria-hidden', 'true');
     const i = _modalStack.indexOf(el);
     if (i > -1) _modalStack.splice(i, 1);
+    if (el.id === 'hub-tm-settings-modal') _stopSample();
     if (el.id === 'hub-tm-focus-panel' && _focusTimer) { clearInterval(_focusTimer); _focusTimer = null; }
     if (el.id === 'hub-tm-timeline-drawer') { _el('#hub-tm-timeline-scrim').classList.remove('is-open'); if (_tlTimer) { clearInterval(_tlTimer); _tlTimer = null; } }
     const back = _returnFocus.get(el);
@@ -1202,8 +1285,11 @@ const timeManagementModule = (function () {
           chips += '<span class="hub-tm-month-chip" style="' + _tagStyle(tag) + '">' + _esc(b.startTime) + ' ' + _esc(b.title || tag.label) + '</span>';
         });
         list.slice(0, 6).forEach(function (b) { dots += '<span class="hub-tm-month-dot" style="' + _tagStyle(_tagOrFallback(b.tagId)) + '"></span>'; });
-        html += '<div class="hub-tm-month-cell' + (d.getMonth() !== m ? ' is-dim' : '') + (ds === today ? ' is-today' : '') + '" data-date="' + ds + '" data-activate role="button" tabindex="0" aria-label="' + DAY_FULL[d.getDay()] + ' ' + _dateLabel(d) + (list.length ? ', ' + list.length + ' block' + (list.length > 1 ? 's' : '') : '') + '">' +
+        const mins = list.reduce(function (s, b) { return s + Math.max(0, _toMins(b.endTime) - _toMins(b.startTime)); }, 0);
+        const load = Math.min(1, mins / 480).toFixed(2);          // 8h booked = full heat
+        html += '<div class="hub-tm-month-cell' + (d.getMonth() !== m ? ' is-dim' : '') + (ds === today ? ' is-today' : '') + '" style="--tm-load:' + load + '" data-date="' + ds + '" data-activate role="button" tabindex="0" aria-label="' + DAY_FULL[d.getDay()] + ' ' + _dateLabel(d) + (list.length ? ', ' + list.length + ' block' + (list.length > 1 ? 's' : '') : '') + '">' +
                   '<span class="hub-tm-month-num">' + d.getDate() + '</span>' +
+                  (mins ? '<span class="hub-tm-month-total">' + _fmtDur(mins) + '</span>' : '') +
                   '<span class="hub-tm-month-chips">' + chips + (list.length > 3 ? '<span class="hub-tm-month-more">+' + (list.length - 3) + ' more</span>' : '') + '</span>' +
                   '<span class="hub-tm-month-dots">' + dots + '</span></div>';
       }
@@ -1934,73 +2020,191 @@ const timeManagementModule = (function () {
   }
 
   /* ============================================================
-     SET TIME  (repeat a time range on chosen weekdays)
+     SET TIME  ·  v2 "Schedule builder"
+     • Controls on the left, a LIVE calendar preview on the right — no Preview button
+     • Quick durations, 24h day-bar that shows what is already planned, presets for repeat days
+     • Conflicts are flagged before you apply; click any date to add / skip it by hand
+     • Tag + optional title picked right here; Undo after applying
      ============================================================ */
+  function _sbTimeVal(m) { return m >= DAY_MINS ? '00:00' : _toTime(m); }
+  function _sbTagHtml() {
+    return _allTags().map(function (t) {
+      return '<button type="button" class="hub-tm-tl-chip" data-sb-tag="' + _esc(t.id) + '" style="' + _tagStyle(t) + '" aria-pressed="false"><span class="hub-tm-tag-dot"></span>' + _esc(t.label) + '</button>';
+    }).join('');
+  }
   function _openSetTime() {
-    _stRows = null;
-    _el('#hub-tm-settime-error').textContent = '';
-    _el('#tm-settime-tag').textContent = _tagOrFallback(_activeTagId).label;
-    _renderStRows();
+    const now = new Date();
+    let s = 9 * 60;
+    if (_currentDate === _todayStr()) s = Math.min(DAY_MINS - CREATE_DUR, Math.ceil((now.getHours() * 60 + now.getMinutes() + 1) / 30) * 30);
+    _sb = { tag: _tagOrFallback(_activeTagId).id === FALLBACK_TAG.id ? 'work' : _activeTagId, days: [], weeks: 1, ov: {}, dur: CREATE_DUR };
+    _el('#tm-input-start').value = _toTime(s);
+    _el('#tm-input-end').value = _sbTimeVal(s + CREATE_DUR);
+    _el('#tm-sb-title').value = '';
+    _el('#tm-sb-tags').innerHTML = _sbTagHtml();
+    _sbRender();
     _openModal(_el('#hub-tm-set-time-modal'), '#tm-input-start');
   }
+
+  function _sbCompute() {
+    const out = { ok: false, err: '', s: 0, e: 0, weeks: [], rows: [], conflicts: 0, win: null };
+    const st = _el('#tm-input-start').value, en = _el('#tm-input-end').value;
+    const base = _parseDate(_currentDate), endD = _addDays(base, _sb.weeks * 7 - 1);
+    out.win = { base: base, end: endD };
+    if (!st || !en) out.err = 'Set both a start and an end time.';
+    else {
+      out.s = _toMins(st); out.e = _toMins(en);
+      if (out.e === 0 && out.s > 0) out.e = DAY_MINS;
+      if (out.e <= out.s) out.err = 'End time must be after the start time.'; else out.ok = true;
+    }
+    const first = _weekStart(_currentDate), last = _addDays(_weekStart(_dateToStr(endD)), 6);
+    const total = Math.round((last - first) / 86400000) + 1;
+    let wk = [];
+    for (let i = 0; i < total; i++) {
+      const d = _addDays(first, i), ds = _dateToStr(d);
+      const inWin = d >= base && d <= endD;
+      const match = _sb.days.length ? _sb.days.indexOf(d.getDay()) > -1 : ds === _currentDate;
+      const inc = inWin && (_sb.ov[ds] !== undefined ? _sb.ov[ds] === 1 : match);
+      const hit = inc && out.ok ? _overlap(ds, out.s, out.e) : null;
+      if (hit) out.conflicts++; else if (inc && out.ok) out.rows.push({ date: ds, s: out.s, e: out.e });
+      wk.push({ d: d, ds: ds, inWin: inWin, match: match, inc: inc, hit: hit, first: i === 0 });
+      if (wk.length === 7) { out.weeks.push(wk); wk = []; }
+    }
+    return out;
+  }
+
+  function _sbRender() {
+    const c = _sbCompute(), tag = _tagOrFallback(_sb.tag), dlg = _el('#hub-tm-set-time-modal .hub-tm-dialog');
+    dlg.style.setProperty('--tm-c', _safeColor(tag.color));
+    if (c.ok) _sb.dur = c.e - c.s;
+    const base = c.win.base, bd = DAY_SHORT[base.getDay()] + ', ' + _dateLabel(base);
+
+    /* 1 · time */
+    _el('#tm-sb-dur').textContent = c.ok ? _fmtDur(c.e - c.s) : '—';
+    _all('#tm-sb-durs [data-sb-dur]').forEach(function (b) { b.setAttribute('aria-pressed', c.ok && parseInt(b.getAttribute('data-sb-dur'), 10) === c.e - c.s ? 'true' : 'false'); });
+    const ex = _blocksForDate(_currentDate);
+    let bar = ex.map(function (b) {
+      const t = _tagOrFallback(b.tagId), s = _toMins(b.startTime), e = _toMins(b.endTime);
+      return '<i class="hub-tm-sb-ex" style="--tm-c:' + _safeColor(t.color) + ';left:' + (s / DAY_MINS * 100) + '%;width:' + ((e - s) / DAY_MINS * 100) + '%"></i>';
+    }).join('');
+    if (c.ok) bar += '<i class="hub-tm-sb-win" style="left:' + (c.s / DAY_MINS * 100) + '%;width:' + ((c.e - c.s) / DAY_MINS * 100) + '%"></i>';
+    _el('#tm-sb-track').innerHTML = bar;
+    const clash = c.ok ? _overlap(_currentDate, c.s, c.e) : null;
+    _el('#tm-sb-bar-cap').textContent = bd + ' · ' + (ex.length ? _tlPlural(ex.length, 'block') + ' already planned (faded)' : 'nothing planned yet') +
+      (clash ? ' · overlaps “' + (clash.title || _tagOrFallback(clash.tagId).label) + '”' : '');
+
+    /* 2 · repeat */
+    const key = _sb.days.slice().sort().join();
+    SB_PRESETS.forEach(function (p) {
+      const n = _el('#tm-sb-presets [data-sb-preset="' + p[0] + '"]');
+      if (n) n.setAttribute('aria-pressed', p[2].slice().sort().join() === key ? 'true' : 'false');
+    });
+    _all('#tm-day-checks input').forEach(function (i) { i.checked = _sb.days.indexOf(parseInt(i.value, 10)) > -1; });
+    _el('#tm-sb-repeat-cap').textContent = _sb.days.length
+      ? 'Repeats every ' + SB_DAYS.filter(function (d) { return _sb.days.indexOf(d[0]) > -1; }).map(function (d) { return d[1]; }).join(', ') + '.'
+      : 'Only ' + bd + '. Pick days to repeat — or tap dates in the preview.';
+
+    /* 3 · span */
+    _all('#tm-sb-weeks [data-sb-weeks]').forEach(function (b) { b.setAttribute('aria-pressed', parseInt(b.getAttribute('data-sb-weeks'), 10) === _sb.weeks ? 'true' : 'false'); });
+    _el('#tm-sb-span-cap').textContent = _dateLabel(c.win.base) + ' → ' + _dateLabel(c.win.end) + ' · starts from the selected date.';
+
+    /* 4 · details */
+    _all('#tm-sb-tags [data-sb-tag]').forEach(function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-sb-tag') === _sb.tag ? 'true' : 'false'); });
+    _el('#tm-sb-title').placeholder = 'Title (optional) — defaults to “' + tag.label + '”';
+
+    /* preview */
+    const mins = c.rows.length * (c.e - c.s);
+    const cell = function (k, v, alert) { return '<div class="hub-tm-tl-stat' + (alert ? ' is-alert' : '') + '"><span class="hub-tm-tl-stat-k">' + k + '</span><span class="hub-tm-tl-stat-v">' + v + '</span></div>'; };
+    _el('#tm-sb-stats').innerHTML = cell('Blocks', c.rows.length) + cell('Total time', c.rows.length ? _fmtDur(mins) : '0m') + cell('Conflicts', c.conflicts, c.conflicts > 0);
+    let html = '<div class="hub-tm-sb-dow">' + SB_DAYS.map(function (d) { return '<span>' + d[1] + '</span>'; }).join('') + '</div>';
+    c.weeks.forEach(function (wk) {
+      html += '<div class="hub-tm-sb-week">' + wk.map(function (x) {
+        const dn = x.d.getDate(), mo = (dn === 1 || x.first) ? '<small>' + MONTH_SHORT[x.d.getMonth()] + '</small>' : '';
+        if (!x.inWin) return '<span class="hub-tm-sb-cell is-out">' + mo + '<b>' + dn + '</b></span>';
+        const label = DAY_SHORT[x.d.getDay()] + ' ' + _dateLabel(x.d);
+        let cls = x.inc ? (x.hit ? ' is-conflict' : ' is-on') : (x.match ? ' is-off' : ' is-idle'), tip;
+        if (x.hit) tip = 'Overlaps “' + (x.hit.title || _tagOrFallback(x.hit.tagId).label) + '” ' + x.hit.startTime + '–' + x.hit.endTime + ' — will be skipped';
+        else if (x.inc) tip = 'Will be added';
+        else tip = x.match ? 'Skipped — click to restore' : 'Click to add';
+        if (x.ds === _todayStr()) cls += ' is-today';
+        return '<button type="button" class="hub-tm-sb-cell' + cls + '" data-sb-date="' + x.ds + '" aria-pressed="' + (x.inc ? 'true' : 'false') + '" title="' + _esc(label + ' · ' + tip) + '" aria-label="' + _esc(label + ': ' + tip) + '">' +
+          mo + '<b>' + dn + '</b>' + (x.inc && c.ok ? '<em>' + _toTime(c.s) + '</em>' : '') + '</button>';
+      }).join('') + '</div>';
+    });
+    _el('#tm-sb-cal').innerHTML = html;
+    _el('#hub-tm-settime-error').textContent = c.err;
+    _el('#hub-tm-set-time-modal [data-sb-reset]').hidden = !Object.keys(_sb.ov).length;
+    const btn = _el('#tm-btn-apply-time');
+    btn.disabled = !c.ok || !c.rows.length;
+    btn.textContent = c.rows.length ? 'Add ' + _tlPlural(c.rows.length, 'block') : 'Nothing to add';
+  }
+
   function _bindSetTime() {
     const modal = _el('#hub-tm-set-time-modal');
-    ['#tm-input-start', '#tm-input-end', '#tm-input-weeks', '#tm-day-checks'].forEach(function (s) {
-      _el(s).addEventListener('input', function () { _stRows = null; _renderStRows(); _el('#hub-tm-settime-error').textContent = ''; });
+    _el('#tm-input-start').addEventListener('input', function () {
+      const s = _toMins(this.value);
+      if (this.value && _sb.dur > 0) _el('#tm-input-end').value = _sbTimeVal(Math.min(DAY_MINS, s + _sb.dur));   // moving the start keeps the length
+      _sbRender();
     });
-    _el('#tm-btn-preview').addEventListener('click', _previewSetTime);
-    _el('#tm-btn-apply-time').addEventListener('click', function () {
-      if (!_stRows && !_previewSetTime()) return;
-      const rows = _stRows || [];
-      let added = 0, skipped = 0;
-      const tagId = _tagOrFallback(_activeTagId).id === FALLBACK_TAG.id ? 'work' : _activeTagId;
-      rows.forEach(function (r, i) {
-        if (_overlap(r.date, r.s, r.e)) { skipped++; return; }
-        _timeBlocks.push({ id: _newId(i), date: r.date, tagId: tagId, startTime: _toTime(r.s), endTime: _toTime(r.e), title: _tagOrFallback(tagId).label, subtitle: '', createdAt: Date.now() });
-        added++;
-      });
-      _closeModal(modal);
-      if (added) { _scheduleSave(); _renderGrid({ animate: false, scroll: false }); }
-      _toast(added ? 'Added ' + added + ' block' + (added > 1 ? 's' : '') + (skipped ? ' · ' + skipped + ' skipped (time already taken)' : '') : 'Nothing added — those times are already taken.');
+    _el('#tm-input-end').addEventListener('input', _sbRender);
+    _el('#tm-sb-title').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); _sbApply(); } });
+    _el('#tm-day-checks').addEventListener('change', function () {
+      _sb.days = _all('#tm-day-checks input:checked').map(function (i) { return parseInt(i.value, 10); });
+      _sb.ov = {}; _sbRender();
     });
-    _el('#tm-preview-tbody').addEventListener('click', function (e) {
-      const b = e.target.closest('.hub-tm-preview-delete');
-      if (!b || !_stRows) return;
-      _stRows.splice(parseInt(b.getAttribute('data-i'), 10), 1);
-      _renderStRows();
+    modal.addEventListener('click', function (e) {
+      const t = e.target;
+      let n;
+      if ((n = t.closest('[data-sb-dur]'))) {
+        const s = _toMins(_el('#tm-input-start').value), d = parseInt(n.getAttribute('data-sb-dur'), 10);
+        _el('#tm-input-end').value = _sbTimeVal(Math.min(DAY_MINS, s + d)); _sbRender(); return;
+      }
+      if ((n = t.closest('[data-sb-preset]'))) {
+        const p = SB_PRESETS.filter(function (x) { return x[0] === n.getAttribute('data-sb-preset'); })[0];
+        if (p) { _sb.days = p[2].slice(); _sb.ov = {}; _sbRender(); }
+        return;
+      }
+      if ((n = t.closest('[data-sb-weeks]'))) { _sb.weeks = parseInt(n.getAttribute('data-sb-weeks'), 10); _sbRender(); return; }
+      if ((n = t.closest('[data-sb-tag]'))) { _sb.tag = n.getAttribute('data-sb-tag'); _sbRender(); return; }
+      if (t.closest('[data-sb-reset]')) { _sb.ov = {}; _sbRender(); return; }
+      if ((n = t.closest('[data-sb-date]'))) {
+        const ds = n.getAttribute('data-sb-date'), d = _parseDate(ds);
+        const match = _sb.days.length ? _sb.days.indexOf(d.getDay()) > -1 : ds === _currentDate;
+        const inc = _sb.ov[ds] !== undefined ? _sb.ov[ds] === 1 : match, want = !inc;
+        if (want === match) delete _sb.ov[ds]; else _sb.ov[ds] = want ? 1 : 0;
+        _sbRender();
+        const again = _el('#tm-sb-cal [data-sb-date="' + ds + '"]');
+        if (again) again.focus({ preventScroll: true });
+      }
     });
+    _el('#tm-btn-apply-time').addEventListener('click', _sbApply);
   }
-  function _previewSetTime() {
-    const err = _el('#hub-tm-settime-error');
-    const st = _el('#tm-input-start').value, en = _el('#tm-input-end').value;
-    if (!st || !en) { err.textContent = 'Set both a start and an end time.'; return false; }
-    const s = _toMins(st);
-    let e = _toMins(en);
-    if (e === 0 && s > 0) e = DAY_MINS;
-    if (e <= s) { err.textContent = 'End time must be after the start time.'; return false; }
-    const days = _all('#tm-day-checks input:checked').map(function (c) { return parseInt(c.value, 10); });
-    const weeks = parseInt(_el('#tm-input-weeks').value, 10) || 1;
-    const base = _parseDate(_currentDate), rows = [];
-    if (!days.length) rows.push({ date: _currentDate, s: s, e: e });
-    else for (let i = 0; i < weeks * 7; i++) {
-      const d = _addDays(base, i);
-      if (days.indexOf(d.getDay()) > -1) rows.push({ date: _dateToStr(d), s: s, e: e });
-    }
-    err.textContent = '';
-    _stRows = rows;
-    _renderStRows();
-    return rows.length > 0;
-  }
-  function _renderStRows() {
-    const tb = _el('#tm-preview-tbody');
-    if (!tb) return;
-    if (!_stRows) { tb.innerHTML = '<tr><td colspan="5" class="hub-tm-preview-empty">Press Preview to see the schedule</td></tr>'; return; }
-    if (!_stRows.length) { tb.innerHTML = '<tr><td colspan="5" class="hub-tm-preview-empty">No dates match</td></tr>'; return; }
-    tb.innerHTML = _stRows.map(function (r, i) {
-      const d = _parseDate(r.date);
-      return '<tr><td>' + DAY_SHORT[d.getDay()] + ' ' + _dateLabel(d) + '</td><td>' + _toTime(r.s) + '</td><td>' + _toTime(r.e) + '</td><td>' + _fmtDur(r.e - r.s) + '</td>' +
-             '<td><button type="button" class="hub-tm-preview-delete" data-i="' + i + '" aria-label="Remove ' + DAY_SHORT[d.getDay()] + ' ' + _dateLabel(d) + '" title="Remove">&times;</button></td></tr>';
-    }).join('');
+
+  function _sbApply() {
+    const c = _sbCompute();
+    if (!c.ok || !c.rows.length) return;
+    const tagId = _tagOrFallback(_sb.tag).id === FALLBACK_TAG.id ? 'work' : _sb.tag;
+    const title = (_el('#tm-sb-title').value || '').trim().slice(0, 120) || _tagOrFallback(tagId).label;
+    const ids = []; let skipped = c.conflicts;
+    c.rows.forEach(function (r, i) {
+      if (_overlap(r.date, r.s, r.e)) { skipped++; return; }
+      const id = _newId(i);
+      _timeBlocks.push({ id: id, date: r.date, tagId: tagId, startTime: _toTime(r.s), endTime: _toTime(r.e), title: title, subtitle: '', createdAt: Date.now() });
+      ids.push(id);
+    });
+    _closeModal(_el('#hub-tm-set-time-modal'));
+    if (!ids.length) { _toast('Nothing added — those times are already taken.'); return; }
+    _scheduleSave();
+    _renderGrid({ animate: false, scroll: false });
+    _tlRefresh();
+    _toast('Added ' + _tlPlural(ids.length, 'block') + (skipped ? ' · ' + skipped + ' skipped (time already taken)' : ''), {
+      action: 'Undo',
+      onAction: function () {
+        _timeBlocks = _timeBlocks.filter(function (b) { return ids.indexOf(b.id) === -1; });
+        _scheduleSave();
+        _renderGrid({ animate: false, scroll: false });
+        _tlRefresh();
+      }
+    });
   }
 
   /* ============================================================
@@ -2719,33 +2923,134 @@ const timeManagementModule = (function () {
     try { const u = new URL(v, location.href); return u.protocol === 'http:' || u.protocol === 'https:'; } catch (_) { return false; }
   }
 
+  /* ---- Reading the dialog's current (unsaved) state ---- */
+  function _snd(sel) { return _el('#hub-tm-settings-modal ' + sel); }
+  function _sndAll(sel) { return _all('#hub-tm-settings-modal ' + sel); }
+  function _formVoice() { const r = _snd('input[name="tm-audio-voice"]:checked'); return r ? r.value : 'auto'; }
+  function _formLead(name) { const r = _snd('input[name="' + name + '"]:checked'); const n = r ? parseInt(r.value, 10) : 5; return LEAD_CHOICES.indexOf(n) > -1 ? n : 5; }
+  function _formTag() { const r = _snd('input[name="tm-preview-tag"]:checked'); return r ? r.value : _activeTagId; }
+  function _formVol() { return _clamp(parseInt(_el('#tm-audio-volume').value, 10) || 0, 0, 100); }
+  function _setRadio(name, val) { _sndAll('input[name="' + name + '"]').forEach(function (r) { r.checked = r.value === String(val); }); }
+
+  /* ---- Melody glyph: the cue's real notes drawn as a tiny piano roll ---- */
+  function _rollMarkup(type, tagId) {
+    const notes = _cueNotes(type, tagId);
+    let total = 0, lo = 99, hi = -99;
+    notes.forEach(function (n) { total = Math.max(total, n.at + n.len); lo = Math.min(lo, n.s); hi = Math.max(hi, n.s); });
+    const W = 72, H = 26, pad = 3, bar = 4, span = Math.max(12, hi - lo);
+    return notes.map(function (n) {
+      const x = (n.at / total) * W, w = Math.max(3, (n.len / total) * W - 1.5);
+      const y = pad + (1 - (n.s - lo) / span) * (H - 2 * pad - bar);
+      return '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + w.toFixed(1) + '" height="' + bar + '" rx="2" opacity="' + (0.4 + n.vel * 0.6).toFixed(2) + '"/>';
+    }).join('');
+  }
+  function _renderRolls() {
+    const tagId = _formTag(), tag = _tagOrFallback(tagId);
+    _el('#tm-snd').style.setProperty('--tm-c', _safeColor(tag.color));
+    _sndAll('[data-roll]').forEach(function (svg) { svg.innerHTML = _rollMarkup(svg.getAttribute('data-roll'), tagId); });
+  }
+
+  /* ---- Auditioning (always plays the dialog's CURRENT choices, saved or not) ---- */
+  function _cueSpan(type, tagId, key) {         // seconds the cue rings for
+    const v = VOICES[key];
+    let m = 0;
+    _cueNotes(type, tagId).forEach(function (n) { m = Math.max(m, n.at * v.gap + v.dur * n.len); });
+    return m;
+  }
+  function _mark(type, ms) {
+    const row = _snd('[data-cue="' + type + '"]');
+    if (!row) return;
+    row.classList.add('is-playing');
+    const id = setTimeout(function () { row.classList.remove('is-playing'); }, ms);
+    if (_sample) _sample.timers.push(id);
+  }
+  function _sndError(msg) { _el('#hub-tm-settings-error').textContent = msg || ''; }
+  function _audition(type) {
+    _sndError('');
+    _stopSample();
+    const form = { voice: _formVoice(), vol: _formVol() }, tagId = _formTag();
+    return _armNow().then(function (c) {
+      _playCue({ type: type, tagId: tagId }, c.currentTime + 0.05, form);
+      _mark(type, _cueSpan(type, tagId, _voiceKey(form.voice)) * 1000 + 150);
+    }).catch(function () { _sndError('This browser can’t play synthesised sound.'); });
+  }
+  function _stopSample() {
+    if (!_sample) return;
+    _sample.timers.forEach(clearTimeout);
+    _sample.buses.forEach(function (b) { try { b.disconnect(); } catch (_) {} });
+    _sample = null;
+    _sndAll('.is-playing').forEach(function (n) { if (n.id !== 'tm-sample') n.classList.remove('is-playing'); });
+    const b = _el('#tm-sample');
+    if (b) { b.classList.remove('is-playing'); b.querySelector('span').textContent = 'Hear a sample block'; }
+  }
+  /** Plays heads-up → start → wrap-up → end back to back (gaps shortened), only the moments that are switched on. */
+  function _playSample() {
+    if (_sample) { _stopSample(); return; }
+    _sndError('');
+    const types = ['pre', 'start', 'warn', 'end'].filter(function (t) { return _el('#tm-cue-' + t).checked; });
+    if (!types.length) { _sndError('Switch on at least one moment to hear it.'); return; }
+    const form = { voice: _formVoice(), vol: _formVol() }, tagId = _formTag(), key = _voiceKey(form.voice);
+    _armNow().then(function (c) {
+      _sample = { buses: [], timers: [] };
+      let t = 0.05;
+      types.forEach(function (type) {
+        const at = t, span = _cueSpan(type, tagId, key);
+        _sample.buses.push(_playCue({ type: type, tagId: tagId }, c.currentTime + at, form));
+        _sample.timers.push(setTimeout(function () { _mark(type, span * 1000); }, at * 1000));
+        t = at + span + 1.1;
+      });
+      _sample.timers.push(setTimeout(_stopSample, t * 1000));
+      const b = _el('#tm-sample');
+      b.classList.add('is-playing');
+      b.querySelector('span').textContent = 'Stop sample';
+    }).catch(function () { _sndError('This browser can’t play synthesised sound.'); });
+  }
+
+  /* ---- Fill / sync ---- */
   function _fillSettings() {
+    _stopSample();
     _el('#tm-audio-enabled').checked = _audio.enabled;
-    _el('#tm-audio-voice').value = _audio.voice;
+    _setRadio('tm-audio-voice', _audio.voice);
     _el('#tm-audio-volume').value = _audio.volume;
     _el('#tm-audio-volume-val').textContent = _audio.volume + '%';
     Object.keys(_audio.cues).forEach(function (k) { _el('#tm-cue-' + k).checked = _audio.cues[k]; });
-    _el('#tm-pre-mins').value = String(_audio.preMins);
-    _el('#tm-warn-mins').value = String(_audio.warnMins);
+    _setRadio('tm-pre-mins', _audio.preMins);
+    _setRadio('tm-warn-mins', _audio.warnMins);
     _el('#tm-audio-custom').checked = _audio.useCustom;
     _el('#tm-audio-start-url').value = _audio.startSoundURL;
     _el('#tm-audio-end-url').value = _audio.endSoundURL;
-    _el('#tm-preview-tag').innerHTML = _allTags().map(function (t) { return '<option value="' + _esc(t.id) + '"' + (t.id === _activeTagId ? ' selected' : '') + '>' + _esc(t.label) + '</option>'; }).join('');
+    _el('#tm-snd-adv').open = _audio.useCustom;
+    const tags = _allTags(), pick = _tagById(_activeTagId) ? _activeTagId : (tags[0] && tags[0].id);
+    _el('#tm-preview-tags').innerHTML = '<legend>Melody of</legend>' + tags.map(function (t) {
+      return '<label class="hub-tm-melody" style="' + _tagStyle(t) + '"><input type="radio" name="tm-preview-tag" value="' + _esc(t.id) + '"' + (t.id === pick ? ' checked' : '') + '><span><i aria-hidden="true"></i>' + _esc(t.label) + '</span></label>';
+    }).join('');
+    _renderRolls();
     _syncSettingsEnabled();
   }
   function _syncSettingsEnabled() {
     const on = _el('#tm-audio-enabled').checked;
+    const master = _el('#tm-snd-master');
+    master.classList.toggle('is-on', on);
+    master.classList.toggle('is-armed', on && _armed());
     _el('#tm-audio-options').classList.toggle('is-off', !on);
     _all('#tm-audio-options input, #tm-audio-options select, #tm-audio-options button').forEach(function (n) { n.disabled = !on; });
+    Object.keys(_audio.cues).forEach(function (k) {                    // a moment that is off dims its row and locks its lead time
+      const cb = _el('#tm-cue-' + k), row = cb.closest('.hub-tm-st, .hub-tm-ho');
+      row.classList.toggle('is-on', cb.checked);
+      row.querySelectorAll('.hub-tm-seg input').forEach(function (r) { r.disabled = !on || !cb.checked; });
+    });
     const custom = _el('#tm-audio-custom').checked;
     _all('#tm-audio-start-url, #tm-audio-end-url, [data-test-sound]').forEach(function (n) { n.disabled = !on || !custom; });
-    const note = _el('#hub-tm-audio-status');
-    note.textContent = !on ? 'Turn sound alerts on to choose how they sound.' :
-      'Instrument now: ' + VOICES[_voiceKey(_el('#tm-audio-voice').value)].label + '. Sound plays only while this page is open in a tab.';
+    const warn = _formLead('tm-warn-mins');
+    _el('#tm-warn-note').textContent = 'Two soft pings. Blocks shorter than ' + (2 * warn) + ' min skip it.';
+    _el('[data-auto-now]').textContent = 'Now: ' + VOICES[_themeVoice()].label;
+    _el('#hub-tm-audio-status').textContent = !on
+      ? 'Off. Switch on to hear a chime as blocks start and end.'
+      : (_armed() ? 'Ready' : 'Saving arms sound for this tab') + ' · ' + VOICES[_voiceKey(_formVoice())].label + ' · plays only while this page stays open.';
   }
   function _openSettings() {
     _fillSettings();
-    _el('#hub-tm-settings-error').textContent = '';
+    _sndError('');
     _openModal(_el('#hub-tm-settings-modal'), '#tm-audio-enabled');
   }
   function _bindSettings() {
@@ -2754,19 +3059,31 @@ const timeManagementModule = (function () {
     _el('#hub-tm-audio-chip').addEventListener('click', function () {
       _armNow().then(function () { _updateChip(); _toast('Alerts armed'); }).catch(function () { _toast('This browser can’t play synthesised sound.'); });
     });
-    ['#tm-audio-enabled', '#tm-audio-custom', '#tm-audio-voice'].forEach(function (s) { _el(s).addEventListener('change', _syncSettingsEnabled); });
+
+    modal.addEventListener('change', function (e) {
+      const t = e.target;
+      if (t.name === 'tm-audio-voice') { _syncSettingsEnabled(); _audition('start'); }
+      else if (t.name === 'tm-preview-tag') { _renderRolls(); _audition('start'); }
+      else if (t.id === 'tm-audio-volume') { _audition('pre'); }
+      else _syncSettingsEnabled();
+    });
     _el('#tm-audio-volume').addEventListener('input', function (e) { _el('#tm-audio-volume-val').textContent = e.target.value + '%'; });
+    _el('#tm-sample').addEventListener('click', _playSample);
 
     _el('#tm-btn-settings-save').addEventListener('click', function () {
       const a = _el('#tm-audio-start-url').value.trim(), b = _el('#tm-audio-end-url').value.trim();
       const custom = _el('#tm-audio-custom').checked;
-      if (custom && (!_validSoundUrl(a) || !_validSoundUrl(b))) { _el('#hub-tm-settings-error').textContent = 'Sound URLs must start with http:// or https://'; return; }
+      if (custom && (!_validSoundUrl(a) || !_validSoundUrl(b))) {
+        _el('#tm-snd-adv').open = true;
+        _sndError('Sound URLs must start with http:// or https://');
+        return;
+      }
       _audio.enabled = _el('#tm-audio-enabled').checked;
-      _audio.voice = _el('#tm-audio-voice').value;
-      _audio.volume = _clamp(parseInt(_el('#tm-audio-volume').value, 10) || 0, 0, 100);
+      _audio.voice = _formVoice();
+      _audio.volume = _formVol();
       Object.keys(_audio.cues).forEach(function (k) { _audio.cues[k] = _el('#tm-cue-' + k).checked; });
-      _audio.preMins = parseInt(_el('#tm-pre-mins').value, 10) || 5;
-      _audio.warnMins = parseInt(_el('#tm-warn-mins').value, 10) || 5;
+      _audio.preMins = _formLead('tm-pre-mins');
+      _audio.warnMins = _formLead('tm-warn-mins');
       _audio.useCustom = custom;
       _audio.startSoundURL = a;
       _audio.endSoundURL = b;
@@ -2781,13 +3098,11 @@ const timeManagementModule = (function () {
     modal.addEventListener('click', function (e) {
       const pv = e.target.closest('[data-preview]'), ts = e.target.closest('[data-test-sound]');
       if (pv) {
-        const tagId = _el('#tm-preview-tag').value || 'work', form = { voice: _el('#tm-audio-voice').value, vol: parseInt(_el('#tm-audio-volume').value, 10) };
-        _armNow().then(function (c) { _playCue({ type: pv.getAttribute('data-preview'), tagId: tagId }, c.currentTime + 0.05, form); })
-          .catch(function () { _el('#hub-tm-settings-error').textContent = 'This browser can’t play synthesised sound.'; });
+        _audition(pv.getAttribute('data-preview'));
       } else if (ts) {
         const url = (ts.getAttribute('data-test-sound') === 'start' ? _el('#tm-audio-start-url') : _el('#tm-audio-end-url')).value.trim();
-        if (!url || !_validSoundUrl(url)) { _el('#hub-tm-settings-error').textContent = 'Enter a valid http(s) link first.'; return; }
-        _el('#hub-tm-settings-error').textContent = '';
+        if (!url || !_validSoundUrl(url)) { _sndError('Enter a valid http(s) link first.'); return; }
+        _sndError('');
         _play(url);
       }
     });
