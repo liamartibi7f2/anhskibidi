@@ -23,6 +23,9 @@
 
   <!-- File CSS độc lập đã lọc gọn -->
   <link rel="stylesheet" href="cashflow-styles.css?v=20261023" />
+  <link rel="stylesheet" href="time-management.css?v=20261117" />
+  <link rel="stylesheet" href="time-management.ember.css?v=20261117" />
+  <link rel="stylesheet" href="wallet-os-shell.css?v=20261117" />
 
 </head>
 <body>
@@ -92,7 +95,19 @@
     </header>
 
     <!-- Nơi gắn toàn bộ giao diện CashFlow -->
-    <main id="cashflow-mount" class="module-section"></main>
+    <nav class="wos-tabs" role="tablist" aria-label="Chức năng">
+      <button type="button" class="wos-tab" role="tab" id="tab-finance" data-tab="finance" aria-controls="cashflow-mount" aria-selected="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></svg>
+        <span>Tài chính</span>
+      </button>
+      <button type="button" class="wos-tab" role="tab" id="tab-time" data-tab="time" aria-controls="time-mount" aria-selected="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>
+        <span>Thời gian</span>
+      </button>
+    </nav>
+
+    <main id="cashflow-mount" class="module-section" role="tabpanel" aria-labelledby="tab-finance"></main>
+    <main id="time-mount" class="module-section" role="tabpanel" aria-labelledby="tab-time" hidden></main>
   </div>
 
   <!-- 1. Thư viện Chart.js, SheetJS (XLSX) & Firebase Compat SDK -->
@@ -521,13 +536,182 @@
         }
       };
 
+      // ── C0. ĐỒNG BỘ CLOUD CHO MODULE THỜI GIAN (mỗi tài khoản một document) ──
+      // Cloud : users/{uid}/timeManagement/state  → { schema, json, updatedAt }
+      // Local : hub_tm_data:{uid}  (bản nháp theo tài khoản)  ·  hub_tm_data:guest (khi chưa đăng nhập)
+      // Gộp theo từng mục (updatedAt) + "bia mộ" khi xoá → 2 thiết bị không ghi đè nhau.
+      (function () {
+        var TM_LOCAL = 'hub_tm_data';
+        var TM_CLAIM_OFF = 'hub_tm_claim_off:';
+        var TOMB_TTL = 90 * 86400000;      // bia mộ cũ hơn 90 ngày được dọn để doc không phình
+        var MAX_BYTES = 900 * 1024;        // Firestore giới hạn 1 MiB / document
+        var KINDS = [['timeBlocks', 'blocks'], ['customTags', 'tags'], ['templates', 'templates']];
+        var authListeners = [];
+
+        function clone(o) { return o == null ? o : JSON.parse(JSON.stringify(o)); }
+        function lsKey(uid) { return TM_LOCAL + ':' + (uid || 'guest'); }
+        function lsRead(k) { try { var r = localStorage.getItem(k); return r ? JSON.parse(r) : null; } catch (e) { return null; } }
+        function lsWrite(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+        function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
+        function tmRef(uid) { return db.collection('users').doc(uid).collection('timeManagement').doc('state'); }
+        function parseDoc(snap) {
+          if (!snap || !snap.exists) return null;
+          try { var d = snap.data(); return d && d.json ? JSON.parse(d.json) : null; } catch (e) { return null; }
+        }
+        function tombsOf(p, kind) { return (p && p.tombs && p.tombs[kind] && typeof p.tombs[kind] === 'object') ? p.tombs[kind] : {}; }
+        function ts(x) { return Number(x && x.updatedAt) || 0; }
+        function pick(x, y) {                       // mục nào mới hơn thắng; hoà thì chọn theo nội dung → 2 máy luôn hội tụ
+          if (!y) return x;
+          if (ts(x) !== ts(y)) return ts(x) > ts(y) ? x : y;
+          return JSON.stringify(x) >= JSON.stringify(y) ? x : y;
+        }
+
+        /** Gộp 2 bản dữ liệu (thuần, đối xứng). Thứ tự giữ theo bản `a`, mục mới của `b` nối sau. */
+        function merge(a, b) {
+          if (!a) return b ? clone(b) : null;
+          if (!b) return clone(a);
+          var out = { v: 2 }, tombs = { blocks: {}, tags: {}, templates: {} };
+          KINDS.forEach(function (k) {
+            var ta = tombsOf(a, k[1]), tb = tombsOf(b, k[1]), t = tombs[k[1]];
+            Object.keys(ta).forEach(function (id) { t[id] = Number(ta[id]) || 0; });
+            Object.keys(tb).forEach(function (id) { t[id] = Math.max(t[id] || 0, Number(tb[id]) || 0); });
+          });
+          KINDS.forEach(function (k) {
+            var la = Array.isArray(a[k[0]]) ? a[k[0]] : null, lb = Array.isArray(b[k[0]]) ? b[k[0]] : null;
+            if (!la && !lb) return;                 // để trống → module tự gieo mẫu mặc định
+            la = la || []; lb = lb || [];
+            var byB = {}, used = {}, res = [];
+            lb.forEach(function (it) { if (it && it.id != null) byB[it.id] = it; });
+            la.forEach(function (it) { if (it && it.id != null) { used[it.id] = 1; res.push(pick(it, byB[it.id])); } });
+            lb.forEach(function (it) { if (it && it.id != null && !used[it.id]) res.push(it); });
+            out[k[0]] = clone(res.filter(function (it) { var t = tombs[k[1]][it.id]; return !(t && t >= ts(it)); }));
+          });
+          var sa = Number(a.settingsAt) || 0, sb = Number(b.settingsAt) || 0;
+          var s = sb > sa ? b : sa > sb ? a : (JSON.stringify([a.audio, a.activeTagId]) >= JSON.stringify([b.audio, b.activeTagId]) ? a : b);
+          out.audio = clone(s.audio); out.activeTagId = s.activeTagId; out.settingsAt = Math.max(sa, sb);
+          out.tombs = tombs; out.updatedAt = Math.max(Number(a.updatedAt) || 0, Number(b.updatedAt) || 0);
+          return out;
+        }
+        function fingerprint(p) {                   // so sánh không phụ thuộc thứ tự
+          if (!p) return '';
+          return JSON.stringify([KINDS.map(function (k) {
+            return (Array.isArray(p[k[0]]) ? p[k[0]] : []).map(function (it) { return it.id + ':' + ts(it); }).sort();
+          }), Number(p.settingsAt) || 0, KINDS.map(function (k) { return Object.keys(tombsOf(p, k[1])).sort(); })]);
+        }
+        function pruneTombs(p) {
+          var now = Date.now();
+          KINDS.forEach(function (k) {
+            var t = p.tombs && p.tombs[k[1]];
+            if (t) Object.keys(t).forEach(function (id) { if (now - (Number(t[id]) || 0) > TOMB_TTL) delete t[id]; });
+          });
+          return p;
+        }
+        function bytes(s) { return typeof TextEncoder !== 'undefined' ? new TextEncoder().encode(s).length : s.length * 2; }
+        function syncError(code) { document.dispatchEvent(new CustomEvent('walletTimeSyncError', { detail: code })); }
+
+        Object.assign(window.HubDB, {
+          mergeTimeManagement: merge,
+
+          getAuthStatus: function () { return { uid: currentUser ? currentUser.uid : null, email: currentUser ? currentUser.email || '' : '' }; },
+
+          onAuthChange: function (cb) { if (typeof cb === 'function') authListeners.push(cb); },
+
+          /** → { uid, payload, claimable?, dirty? } cho tài khoản đang đăng nhập */
+          loadTimeManagementState: async function () {
+            // Admin đang xem hộ người khác: không đọc, không ghi dữ liệu thời gian (riêng tư)
+            if (isViewMode) return { uid: viewUid, payload: null };
+            await authReadyPromise;
+            var uid = currentUser ? currentUser.uid : null;
+            var guest = lsRead(lsKey(null)), legacy = lsRead(TM_LOCAL);
+            if (!uid || !db) return { uid: uid, payload: merge(guest, legacy) };
+
+            var cache = lsRead(lsKey(uid)), remote = null, reachable = true;
+            try { remote = parseDoc(await tmRef(uid).get()); }
+            catch (e) { reachable = false; console.warn('[Wallet.OS] Không đọc được lịch trên Cloud, dùng bản cục bộ:', e); }
+
+            var payload = merge(cache, remote);
+            var dirty = !!payload && (!reachable || !remote || fingerprint(payload) !== fingerprint(remote));
+            if (payload) lsWrite(lsKey(uid), payload);
+
+            // Dữ liệu tạo khi chưa đăng nhập: chỉ ĐỀ NGHỊ nhập, không tự chép vào tài khoản
+            var claimable = null, off = false;
+            try { off = localStorage.getItem(TM_CLAIM_OFF + uid) === '1'; } catch (e) {}
+            var pool = off ? null : merge(guest, legacy);
+            if (pool && Array.isArray(pool.timeBlocks)) {
+              var have = {}, tomb = tombsOf(payload, 'blocks');
+              ((payload && payload.timeBlocks) || []).forEach(function (b) { have[b.id] = 1; });
+              var fresh = pool.timeBlocks.filter(function (b) { return b && !have[b.id] && !(tomb[b.id] >= ts(b)); });
+              if (fresh.length) claimable = { count: fresh.length, payload: pool };
+            }
+            return { uid: uid, payload: payload, dirty: dirty, claimable: claimable };
+          },
+
+          /** Ghi: luôn lưu cục bộ trước; lên Cloud bằng transaction (đọc → gộp → ghi) */
+          saveTimeManagementData: async function (payload, opts) {
+            if (isViewMode) return;
+            var uid = opts && opts.uid !== undefined ? opts.uid : (currentUser ? currentUser.uid : null);
+            var clean = pruneTombs(clone(payload));
+            lsWrite(lsKey(uid), clean);
+            if (!uid) return;
+            await authReadyPromise;
+            if (!currentUser || !db || currentUser.uid !== uid) return;   // không bao giờ ghi vào Cloud của tài khoản khác
+            try {
+              var ref = tmRef(uid);
+              var merged = await db.runTransaction(async function (tx) {
+                var m = merge(clean, parseDoc(await tx.get(ref)));
+                var json = JSON.stringify(m);
+                if (bytes(json) > MAX_BYTES) { var err = new Error('Lịch quá lớn'); err.code = 'tm/too-big'; throw err; }
+                tx.set(ref, { schema: 'tm2', json: json, updatedAt: m.updatedAt || Date.now() });
+                return m;
+              });
+              lsWrite(lsKey(uid), merged);
+            } catch (e) {
+              console.error('[Wallet.OS] Lỗi lưu lịch lên Cloud (đã giữ bản cục bộ):', e);
+              syncError(e.code || e.message || 'unknown');
+            }
+          },
+
+          /** cb(uid, remotePayload) mỗi khi thiết bị khác ghi; trả về hàm huỷ */
+          subscribeTimeManagement: function (cb) {
+            if (typeof cb !== 'function') return function () {};
+            var unsub = null, dead = false;
+            authReadyPromise.then(function () {
+              if (dead || isViewMode || !currentUser || !db) return;
+              var uid = currentUser.uid;
+              unsub = tmRef(uid).onSnapshot(function (snap) {
+                if (snap.metadata && snap.metadata.hasPendingWrites) return;   // tiếng vọng của chính mình
+                var remote = parseDoc(snap);
+                if (remote) { try { cb(uid, remote); } catch (e) { console.error(e); } }
+              }, function (e) { console.warn('[Wallet.OS] Mất kết nối đồng bộ lịch:', e); });
+            });
+            return function () { dead = true; if (unsub) unsub(); };
+          },
+
+          /** Người dùng đồng ý/từ chối nhập dữ liệu "khách" vào tài khoản */
+          claimTimeManagementLocal: function (uid, accept) {
+            if (!uid) return;
+            if (accept) { lsDel(lsKey(null)); lsDel(TM_LOCAL); }
+            else { try { localStorage.setItem(TM_CLAIM_OFF + uid, '1'); } catch (e) {} }
+          }
+        });
+
+        if (auth) {
+          auth.onAuthStateChanged(function (u) {
+            var ev = { uid: u ? u.uid : null };
+            authListeners.slice().forEach(function (f) { try { f(ev); } catch (e) {} });
+          });
+        }
+      })();
+
       // ── C. Giả lập đối tượng app ──
       window.app = {
         getLanguage: function () {
           return localStorage.getItem('hub_system_language') || 'vi';
         },
         register: function (mod) {
-          window.__registeredCashflow = mod;
+          // Mỗi module một ô riêng — module Thời gian không được ghi đè Tài chính
+          if (mod && mod.id === 'time-management') window.__registeredTime = mod;
+          else window.__registeredCashflow = mod;
         }
       };
     })();
@@ -536,6 +720,7 @@
   <!-- 3. Nạp nguyên bản file cashflow.js -->
   <script src="cashflow.js?v=20261023"></script>
   <script src="walletos-mobile.js?v=20261023"></script>
+  <script src="time-management.js?v=20261117"></script>
 
   <!-- 4. Khởi chạy giao diện & các nút điều khiển -->
   <script>
@@ -642,6 +827,65 @@
         };
         reader.readAsText(file);
       });
+    });
+  </script>
+
+  <!-- 4b. Chuyển tab Tài chính / Thời gian (#finance | #time) -->
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      var tabs = document.querySelectorAll('.wos-tab');
+      var fin = document.getElementById('cashflow-mount');
+      var timeEl = document.getElementById('time-mount');
+      var timeMod = window.__registeredTime;
+      var current = 'finance';
+
+      // Admin đang xem hộ tài khoản khác: ẩn tab Thời gian (lịch là dữ liệu riêng tư, không đọc/ghi)
+      if (document.body.classList.contains('wallet-readonly')) {
+        document.getElementById('tab-time').hidden = true;
+        timeMod = null;
+      }
+
+      // Cảnh báo một lần nếu lịch vượt giới hạn 1 MiB của Firestore
+      var warned = false;
+      document.addEventListener('walletTimeSyncError', function (e) {
+        if (e.detail === 'tm/too-big' && !warned) {
+          warned = true;
+          alert('Lịch đã quá lớn để đồng bộ lên Cloud (dữ liệu vẫn an toàn trên máy này). Hãy xoá bớt khối lịch cũ hoặc ghi chú dài.');
+        }
+      });
+
+      function show(name) {
+        if (name === 'time' && !timeMod) name = 'finance';   // module chưa nạp → ở lại Tài chính
+        if (current === 'time' && name !== 'time') timeMod.destroy();
+        fin.hidden = name === 'time';
+        timeEl.hidden = name !== 'time';
+        if (name === 'time' && current !== 'time') timeMod.render(timeEl);
+        tabs.forEach(function (t) {
+          var on = t.dataset.tab === name;
+          t.setAttribute('aria-selected', String(on));
+          t.tabIndex = on ? 0 : -1;
+        });
+        current = name;
+        try { localStorage.setItem('wallet_os_tab', name); } catch (_) {}
+        if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
+      }
+
+      tabs.forEach(function (t, i) {
+        t.addEventListener('click', function () { show(t.dataset.tab); });
+        t.addEventListener('keydown', function (e) {          // ← → chuyển tab bằng bàn phím
+          if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+          var n = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+          n.focus(); show(n.dataset.tab);
+        });
+      });
+      window.addEventListener('hashchange', function () {
+        var h = location.hash.slice(1);
+        if (h === 'finance' || h === 'time') show(h);
+      });
+
+      var start = location.hash.slice(1);
+      if (start !== 'finance' && start !== 'time') { try { start = localStorage.getItem('wallet_os_tab'); } catch (_) {} }
+      if (start === 'time') show('time');
     });
   </script>
 
