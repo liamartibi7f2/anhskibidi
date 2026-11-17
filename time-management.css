@@ -3348,3 +3348,200 @@ body.theme-optimized #time-management .hub-tm-view-btn[aria-pressed="true"] {
 }
 body.theme-optimized #time-management .hub-tm-view-btn[aria-pressed="true"]::before { content: "["; }
 body.theme-optimized #time-management .hub-tm-view-btn[aria-pressed="true"]::after { content: "]"; }
+
+/* ==========================================================================
+   26. EMBER NOIR  ·  "Forge Ledger"  (tích hợp từ time-management.ember.css)
+   Trích & mở rộng từ cashflow-styles.css (Phần 1: theme Ember Noir + Phần 3).
+   Phần này phải nằm CUỐI file. Dùng đúng token Ember của Wallet.OS:
+   --accent-primary (amber), --ember-brass, --ember-brass-line,
+   --font-body (Barlow), --font-mono (Barlow Condensed).
+
+   Ngôn ngữ thiết kế (giống Wallet.OS):
+     FRAME  khung đồng đôi (hairline ngoài + vạch trong) + 4 đinh tán
+     TYPE   Barlow Condensed cho số/nhãn, Barlow cho chữ
+     SHAPE  nút "keycap": cạnh trên sáng, cạnh dưới tối
+     DETAIL ◆ đầu nhãn, vạch kép dưới đầu bảng, đường chấm giữa các giờ
+   Optimize-safe: trạng thái luôn có border / background-color.
+   ========================================================================== */
+
+/* 1. TOKENS (gồm toàn bộ Phần 3 gốc) ------------------------------------- */
+[data-theme="ember-noir"] #time-management {
+  --tm-font-display: var(--font-body);
+  --tm-font-num: var(--font-mono);
+  --tm-r-sm: 6px;
+  --tm-r: 10px;
+  --tm-r-lg: 12px;
+  --tm-block-r: 8px;
+  --tm-on-accent: #1a0e04;
+  --tm-scrim: rgba(10, 6, 4, 0.8);
+  --tm-line: var(--ember-brass-line);
+  --tm-line-strong: rgba(224, 170, 100, 0.46);
+  --tm-hour-line: var(--ember-brass-line);
+  --tm-half-line: color-mix(in srgb, var(--ember-brass) 8%, transparent);
+  --tm-half-style: dotted;                       /* đường chấm như sổ cái */
+  --tm-today-bg: color-mix(in srgb, var(--accent-primary) 7%, transparent);
+  --tm-tint-scale: 0.8;
+  --tm-block-clip: none;
+
+  --tm-title-prefix: "";
+  --tm-now-prefix: "◆ ";
+  --tm-time-ls: 0.06em;
+  --tm-slot-cursor: cell;
+  --tm-lock-display: none;
+  --tm-chip-clip: none;
+  --tm-switch-clip: none;
+  --tm-week-clip: none;
+  --tm-now-bg: linear-gradient(90deg, var(--accent-primary), color-mix(in srgb, var(--accent-primary) 8%, transparent));
+
+  /* sân khấu: ánh đèn trên cùng + 4 đinh tán đồng ở góc khung */
+  --tm-rivet: radial-gradient(circle at 38% 34%, #ffe2bb 0 0.7px, #e0a04c 1.7px, #8a5014 3.1px, transparent 3.3px);
+  --tm-stage-bg:
+    var(--tm-rivet) left 11px top 11px / 9px 9px no-repeat,
+    var(--tm-rivet) right 11px top 11px / 9px 9px no-repeat,
+    var(--tm-rivet) left 11px bottom 11px / 9px 9px no-repeat,
+    var(--tm-rivet) right 11px bottom 11px / 9px 9px no-repeat,
+    radial-gradient(70% 38% at 50% -8%, rgba(255, 159, 67, 0.11), transparent 70%),
+    repeating-linear-gradient(135deg, rgba(224, 170, 100, 0.028) 0 1px, transparent 1px 7px),
+    var(--bg-deep);
+  /* thước đồng: vạch giờ dài, nửa giờ ngắn */
+  --tm-gutter-ticks:
+    linear-gradient(180deg, color-mix(in srgb, var(--ember-brass) 70%, transparent) 0 1px, transparent 1px) right top / 10px var(--tm-hour-h) repeat-y,
+    linear-gradient(180deg, color-mix(in srgb, var(--ember-brass) 34%, transparent) 0 1px, transparent 1px) right top / 5px var(--tm-slot-h) repeat-y;
+  --tm-sb-w: 8px;
+  --tm-sb-thumb: rgba(224, 170, 100, 0.26);
+  --tm-sb-r: 4px;
+  --tm-select: rgba(255, 159, 67, 0.35);
+
+  /* keycap dùng chung */
+  --tm-keycap: inset 0 1px 0 rgba(255, 220, 180, 0.07), inset 0 -2px 0 rgba(0, 0, 0, 0.3);
+  --tm-keycap-amber: inset 0 1px 0 rgba(255, 236, 210, 0.55), inset 0 -2px 0 rgba(120, 50, 0, 0.38), 0 8px 18px -8px rgba(255, 159, 67, 0.55);
+  color-scheme: dark;
+}
+
+/* Khối lịch: vạch "than hồng" ở cạnh trái (Phần 3 gốc) */
+[data-theme="ember-noir"] .hub-tm-block,
+[data-theme="ember-noir"] .hub-tm-week-block {
+  --tm-block-texture: none;
+  --tm-block-shadow: inset 3px 0 0 var(--tm-c);
+  --tm-block-shadow-hover: inset 3px 0 0 var(--tm-c), 0 6px 16px rgba(0, 0, 0, 0.5);
+  --tm-stitch: 0 solid transparent;
+}
+
+/* 2. KHUNG ĐỒNG ĐÔI ------------------------------------------------------ */
+[data-theme="ember-noir"] body:not(.theme-optimized) #time-management .hub-tm-grid-wrapper {
+  border: 1px solid rgba(224, 170, 100, 0.34);
+  border-radius: var(--tm-r-lg);
+  box-shadow: inset 0 0 0 5px var(--bg-surface), inset 0 0 0 6px var(--ember-brass-line);
+}
+[data-theme="ember-noir"] .hub-tm-grid-wrapper::before,
+[data-theme="ember-noir"] .hub-tm-grid-wrapper::after { display: none; }   /* bỏ ngoặc HUD của Cyberpunk */
+[data-theme="ember-noir"] body:not(.theme-optimized) #time-management .hub-tm-header {
+  border-bottom: 3px double rgba(224, 170, 100, 0.5);
+}
+[data-theme="ember-noir"] #time-management .hub-tm-time-gutter { border-right: 1px solid var(--ember-brass-line); }
+
+/* 3. CHỮ: khắc, gọn, thẳng hàng số ------------------------------------- */
+[data-theme="ember-noir"] #time-management .hub-tm-title {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+[data-theme="ember-noir"] body:not(.theme-optimized) #time-management .hub-tm-title::before { content: "◆ "; color: var(--accent-primary); }
+[data-theme="ember-noir"] #time-management .hub-tm-hour-label,
+[data-theme="ember-noir"] #time-management .hub-tm-block-time,
+[data-theme="ember-noir"] #time-management .hub-tm-week-block-time {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: 0.06em;
+}
+[data-theme="ember-noir"] #time-management .hub-tm-hour-label { font-size: 0.82rem; color: color-mix(in srgb, var(--ember-brass) 80%, var(--text-secondary)); }
+[data-theme="ember-noir"] #time-management .hub-tm-block-title { font-weight: 600; }
+[data-theme="ember-noir"] .hub-tm-block--past { opacity: 0.58; }
+[data-theme="ember-noir"] .hub-tm-tag-dot { border-radius: 1px; transform: rotate(45deg) scale(0.85); box-shadow: none; }
+
+/* 4. BÂY GIỜ: than hồng ------------------------------------------------- */
+[data-theme="ember-noir"] .hub-tm-now-line { height: 2px; box-shadow: none; }
+[data-theme="ember-noir"] .hub-tm-now-dot { border-radius: 1px; transform: rotate(45deg); box-shadow: 0 0 10px rgba(255, 159, 67, 0.6); }
+[data-theme="ember-noir"] .hub-tm-now-chip {
+  border-radius: 4px;
+  background: var(--accent-primary);
+  color: var(--tm-on-accent);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+/* 5. TUẦN / THÁNG: vạch kép dưới đầu bảng, nhãn khắc ------------------- */
+[data-theme="ember-noir"] body:not(.theme-optimized) #time-management .hub-tm-week-head,
+[data-theme="ember-noir"] body:not(.theme-optimized) #time-management .hub-tm-grid-header {
+  border-bottom: 3px double rgba(224, 170, 100, 0.5);
+}
+[data-theme="ember-noir"] #time-management .hub-tm-week-head-day,
+[data-theme="ember-noir"] #time-management .hub-tm-month-head-cell {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+[data-theme="ember-noir"] #time-management .hub-tm-week-head-cell.is-today .hub-tm-week-head-date,
+[data-theme="ember-noir"] #time-management .hub-tm-month-cell.is-today .hub-tm-month-num {
+  background: var(--accent-primary);
+  color: var(--tm-on-accent);
+  border-color: var(--ember-brass);
+  border-radius: 6px;
+}
+[data-theme="ember-noir"] #time-management .hub-tm-month-cell { border-top: 2px solid var(--ember-brass-line); }
+[data-theme="ember-noir"] #time-management .hub-tm-month-cell.is-today { border-top-color: var(--accent-primary); }
+[data-theme="ember-noir"] #time-management .hub-tm-month-chip { font-family: var(--font-body); font-weight: 600; border-radius: 4px; }
+
+/* 6. NÚT "KEYCAP" ---------------------------------------------------------- */
+[data-theme="ember-noir"] #time-management .hub-tm-btn,
+[data-theme="ember-noir"] #time-management .hub-tm-date-nav,
+[data-theme="ember-noir"] #time-management .hub-tm-view-btn {
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+[data-theme="ember-noir"] body:not(.theme-optimized) #time-management .hub-tm-btn,
+[data-theme="ember-noir"] body:not(.theme-optimized) #time-management .hub-tm-date-nav {
+  border-color: rgba(224, 170, 100, 0.34);
+  box-shadow: var(--tm-keycap);
+}
+[data-theme="ember-noir"] #time-management .hub-tm-btn:hover,
+[data-theme="ember-noir"] #time-management .hub-tm-date-nav:hover { border-color: var(--ember-brass); background: var(--glass-highlight); }
+[data-theme="ember-noir"] body:not(.theme-optimized) #time-management .hub-tm-btn--primary,
+[data-theme="ember-noir"] body:not(.theme-optimized) #time-management .hub-tm-view-btn[aria-pressed="true"] {
+  color: var(--tm-on-accent);
+  background-color: var(--accent-primary);
+  background-image: linear-gradient(180deg, #ffb865, #ff9f43 55%, #f08a2a);
+  box-shadow: var(--tm-keycap-amber);
+}
+[data-theme="ember-noir"] #time-management .hub-tm-btn--primary:active { transform: translateY(1px); }
+
+/* 7. HỘP THOẠI · BẢNG CHI TIẾT · TOAST --------------------------------- */
+[data-theme="ember-noir"] body:not(.theme-optimized) .hub-tm-drawer,
+[data-theme="ember-noir"] body:not(.theme-optimized) .hub-tm-dialog,
+[data-theme="ember-noir"] body:not(.theme-optimized) .hub-tm-focus-card {
+  border: 1px solid rgba(224, 170, 100, 0.5);
+  border-radius: var(--tm-r-lg);
+  box-shadow: inset 0 0 0 5px var(--bg-surface), inset 0 0 0 6px var(--ember-brass-line), var(--shadow-lg);
+}
+[data-theme="ember-noir"] body:not(.theme-optimized) .hub-tm-toast {
+  border: 1px solid var(--ember-brass-line);
+  border-left: 4px solid var(--accent-primary);
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+[data-theme="ember-noir"] #hub-tm-details-modal .hub-tm-inspector { clip-path: none; border: 1px solid var(--ember-brass-line); border-radius: 16px; box-shadow: var(--shadow-lg); }
+[data-theme="ember-noir"] .hub-tm-insp-hero { background-image: linear-gradient(180deg, color-mix(in srgb, var(--tm-c) 18%, transparent), transparent); }
+[data-theme="ember-noir"] .hub-tm-insp-eyebrow::before { content: "◆ "; color: var(--tm-c); }
+[data-theme="ember-noir"] .hub-tm-insp-title { font-size: 1.6rem; font-weight: 700; }
+[data-theme="ember-noir"] .hub-tm-sec-title { font-family: var(--font-mono); letter-spacing: 0.16em; text-transform: uppercase; }
+[data-theme="ember-noir"] .hub-tm-hab-minibtn[aria-pressed="true"] { color: var(--accent-primary); }
+[data-theme="ember-noir"] .hub-tm-focus-fill { background-color: var(--accent-primary); }
