@@ -26,6 +26,7 @@
   <link rel="stylesheet" href="time-management.css?v=20261117" />
   <link rel="stylesheet" href="time-management.ember.css?v=20261117" />
   <link rel="stylesheet" href="wallet-os-shell.css?v=20261117" />
+  <link rel="stylesheet" href="wallet-os-topbar.css?v=20261118" />
 
 </head>
 <body>
@@ -34,12 +35,22 @@
     <!-- Thanh điều khiển & Đăng nhập Cloud -->
     <header class="standalone-topbar glass">
       <div class="standalone-brand">
-        <span class="st-logo" aria-hidden="true">
+        <!-- Tài chính: đồng xu + ví -->
+        <span class="st-logo st-logo--fin" aria-hidden="true">
           <svg width="16" height="16" viewBox="0 0 24 24"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></svg>
         </span>
-        <span class="st-brand-text">
+        <span class="st-brand-text st-brand--fin">
           <span class="st-wordmark">Wallet<span class="standalone-brand-dot">.OS</span></span>
           <span class="st-tagline">Personal Finance</span>
+        </span>
+
+        <!-- Thời gian: mặt đồng hồ chạy giờ thật -->
+        <span class="st-logo st-logo--time" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 3.4v1.8M12 18.8v1.8M3.4 12h1.8M18.8 12h1.8"/><g class="st-hand st-hand--m"><path d="M12 12V6"/></g><g class="st-hand st-hand--h"><path d="M12 12V8.4"/></g><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/></svg>
+        </span>
+        <span class="st-brand-text st-brand--time">
+          <span class="st-wordmark">Chrono<span class="standalone-brand-dot">.OS</span></span>
+          <span class="st-tagline"><span class="st-tagline-text">Time Management</span><span class="st-clock" id="st-clock">--:--</span></span>
         </span>
       </div>
 
@@ -830,6 +841,36 @@
     });
   </script>
 
+  <!-- 4a. Thanh trên cùng theo mục: đổi phong cách + đồng hồ/thước giờ thật -->
+  <script>
+    (function () {
+      var bar = document.querySelector('.standalone-topbar');
+      var clock = document.getElementById('st-clock');
+      var TITLES = {
+        finance: 'Wallet.OS — Quản Lý Tài Chính Cá Nhân',
+        time: 'Chrono.OS — Quản Lý Thời Gian'
+      };
+      var timer = null;
+      function pad(n) { return n < 10 ? '0' + n : '' + n; }
+      function tick() {
+        var d = new Date(), h = d.getHours(), m = d.getMinutes();
+        if (clock) clock.textContent = pad(h) + ':' + pad(m);
+        bar.style.setProperty('--tm-now', ((h * 60 + m) / 1440 * 100).toFixed(2));   // vạch "bây giờ" trên thước 24h
+        bar.style.setProperty('--tm-h', ((h % 12) * 30 + m * 0.5).toFixed(1) + 'deg');
+        bar.style.setProperty('--tm-m', (m * 6).toFixed(1) + 'deg');
+      }
+      function setSection(name) {
+        var s = name === 'time' ? 'time' : 'finance';
+        document.body.setAttribute('data-section', s);
+        document.title = TITLES[s];
+        clearInterval(timer);
+        if (s === 'time') { tick(); timer = setInterval(tick, 30000); }
+      }
+      window.WalletTopbar = { setSection: setSection };
+      setSection('finance');
+    })();
+  </script>
+
   <!-- 4b. Chuyển tab Tài chính / Thời gian (#finance | #time) -->
   <script>
     document.addEventListener('DOMContentLoaded', function () {
@@ -866,6 +907,7 @@
           t.tabIndex = on ? 0 : -1;
         });
         current = name;
+        if (window.WalletTopbar) window.WalletTopbar.setSection(name);
         try { localStorage.setItem('wallet_os_tab', name); } catch (_) {}
         if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
       }
@@ -969,7 +1011,8 @@
       }
       banner.className = 'wa-banner' + (isError ? ' is-error' : '');
       banner.textContent = '';
-      banner.appendChild(el('span', '', text));
+      banner.appendChild(el('span', 'wa-banner-badge', isError ? 'LỖI' : 'CHỈ ĐỌC'));
+      banner.appendChild(el('span', 'wa-banner-text', text));
       var b = el('button', '', 'Thoát chế độ xem');
       b.type = 'button';
       b.addEventListener('click', W.exit);
@@ -977,15 +1020,15 @@
     }
 
     function viewText(note) {
-      return '👁 Đang xem tài khoản: ' + (W.viewLabel || W.viewUid) + ' — CHỈ ĐỌC' + (note ? '  ·  ℹ ' + note : '');
+      return 'Đang xem tài khoản: ' + (W.viewLabel || W.viewUid) + '' + (note ? '  ·  ℹ ' + note : '');
     }
     if (W.isViewMode) {
       showBanner(viewText(W.getNote()));
       document.addEventListener('walletViewNote', function (e) { showBanner(viewText(e.detail)); });
       document.addEventListener('walletViewError', function (e) {
-        showBanner('⚠ ' + e.detail + ' (đang KHÔNG hiển thị dữ liệu thật)', true);
+        showBanner(e.detail + ' (đang KHÔNG hiển thị dữ liệu thật)', true);
       });
-      if (W.getError()) showBanner('⚠ ' + W.getError() + ' (đang KHÔNG hiển thị dữ liệu thật)', true);
+      if (W.getError()) showBanner(W.getError() + ' (đang KHÔNG hiển thị dữ liệu thật)', true);
     }
 
     // ---------- Nút + bảng chọn người dùng (chỉ admin thấy) ----------
@@ -1044,8 +1087,11 @@
       if (!W.isAdmin() || document.getElementById('st-admin')) return;
       var ctr = document.querySelector('.standalone-controls');
       if (!ctr) return;
-      var btn = el('button', 'standalone-btn st-solo', '👁 Admin');
+      var btn = el('button', 'standalone-btn st-solo st-admin');
       btn.id = 'st-admin'; btn.type = 'button';
+      btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>';   // chuỗi tĩnh, không chứa dữ liệu người dùng
+      btn.appendChild(el('span', 'st-label', 'Admin'));
+      btn.setAttribute('aria-pressed', String(!!W.isViewMode));
       btn.title = 'Xem tài khoản người dùng (chỉ đọc)';
       btn.addEventListener('click', openPanel);
       ctr.insertBefore(btn, ctr.firstChild);
