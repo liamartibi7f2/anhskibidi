@@ -4538,7 +4538,7 @@ const timeManagementModule = (function () {
         '</div>' +
       '</section>' +
       '<section class="hub-tm-hab-card"><h4>How far ahead to send</h4>' +
-        '<div class="hub-tm-hab-opts">' +
+        '<div class="hub-tm-hab-opts hub-tm-hab-opts--3">' +
           HAB_WINDOWS.map(function (w) { return opt('win', w, c.winDays === w, w + ' days', w === 7 ? 'Lightest — best for long repeats.' : w === 14 ? 'Recommended.' : 'More To-Dos in Habitica at once.'); }).join('') +
         '</div>' +
         '<p class="hub-tm-hint">Later blocks stay in the planner and join Habitica as their day gets close.</p>' +
