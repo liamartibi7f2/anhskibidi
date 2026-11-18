@@ -1352,7 +1352,7 @@ const timeManagementModule = (function () {
         }
         if (sk.inRun[ds]) { dcls += ' is-streak'; band = '<i class="hub-tm-month-streak" aria-hidden="true"></i>'; dlabel += ', streak day ' + sk.runAt[ds]; }
         html += '<div class="hub-tm-month-cell' + (d.getMonth() !== m ? ' is-dim' : '') + (ds === today ? ' is-today' : '') + dcls + '" style="--tm-load:' + load + '" data-date="' + ds + '" data-activate role="button" tabindex="0" aria-label="' + DAY_FULL[d.getDay()] + ' ' + _dateLabel(d) + (list.length ? ', ' + list.length + ' block' + (list.length > 1 ? 's' : '') : '') + dlabel + '"' + dtip + '>' +
-                  '<span class="hub-tm-month-num">' + d.getDate() + ring + '</span>' +
+                  '<span class="hub-tm-month-day"><span class="hub-tm-month-num">' + d.getDate() + '</span>' + ring + '</span>' +
                   (mins ? '<span class="hub-tm-month-total">' + _fmtDur(mins) + (gold > 0 ? '<em class="hub-tm-month-gold">+' + _fmtGold(gold) + '</em>' : '') + '</span>' : '') +
                   '<span class="hub-tm-month-chips">' + chips + (list.length > 3 ? '<span class="hub-tm-month-more">+' + (list.length - 3) + ' more</span>' : '') + '</span>' +
                   '<span class="hub-tm-month-dots">' + dots + '</span>' + band + '</div>';
