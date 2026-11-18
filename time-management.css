@@ -2462,7 +2462,6 @@ body.theme-optimized #time-management .hub-tm-tag-item.is-active { box-shadow: n
 .hub-tm-hab-card { display: grid; gap: 12px; padding: 16px 18px; border: 1px solid var(--tm-line-strong); border-radius: calc(var(--tm-r) + 4px); background: var(--bg-deep); }
 .hub-tm-hab-card h4 { margin: 0; font: 700 0.62rem/1 var(--tm-font-num); letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-muted); }
 .hub-tm-hab-opts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.hub-tm-hab-opts.hub-tm-hab-opts--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }   /* three choices fit on one row */
 .hub-tm-hab-opt {
   display: grid; gap: 5px; padding: 12px 14px; text-align: left; cursor: pointer;
   border: 1px solid var(--tm-line-strong); border-radius: calc(var(--tm-r) + 2px);
@@ -2500,7 +2499,7 @@ body.theme-optimized #time-management .hub-tm-tag-item.is-active { box-shadow: n
 .hub-tm-hab-log li.is-empty { color: var(--text-muted); }
 
 @media (max-width: 640px) {
-  .hub-tm-hab-perks, .hub-tm-hab-opts, .hub-tm-hab-opts.hub-tm-hab-opts--3 { grid-template-columns: 1fr; }
+  .hub-tm-hab-perks, .hub-tm-hab-opts { grid-template-columns: 1fr; }
   .hub-tm-hab-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .hub-tm-hab-char { flex-wrap: wrap; }
   .hub-tm-hab-gold { padding-left: 0; border-left: 0; }
@@ -3909,58 +3908,3 @@ body.theme-optimized .hub-tm-rv-track > span { border-radius: 0; }
 [data-theme="ember-noir"] .hub-tm-rv-col { border-bottom: 3px double rgba(224, 170, 100, 0.5); }
 [data-theme="ember-noir"] .hub-tm-rv-col i { border-radius: 2px 2px 0 0; }
 [data-theme="ember-noir"] .hub-tm-rv-ik { color: var(--ember-brass); }
-
-
-/* ==========================================================================
-   28. MONTH CELL — keep the day ring and the block chips inside the outline
-   • The completion ring sticks out 4px around the day number; the cell padding was only
-     5-6px (3px on phones) and the 'today' outline is 2px thick, so the ring touched or crossed it.
-   • Chips were flex boxes, where text-overflow never draws an ellipsis: long titles were cut mid-letter.
-   ========================================================================== */
-#time-management .hub-tm-month-cell { padding: 9px 8px 6px 9px; }
-#time-management .hub-tm-month-chips { min-width: 0; max-width: 100%; overflow: hidden; }
-#time-management .hub-tm-month-chip {
-  display: block;
-  box-sizing: border-box;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-@media (max-width: 768px) {
-  #time-management .hub-tm-month-cell { padding: 6px 3px 4px; }
-}
-
-/* The day number and its completion ring share one fixed frame, so the ring is always concentric with the
-   number whatever the theme does to the number itself (fill, border, tilt, square corners). The frame keeps
-   the number's own footprint (negative margin); the ring only overhangs it by a small, fixed amount. */
-#time-management .hub-tm-month-day {
-  --tm-num: 24px;                      /* size of the day number in this theme */
-  --tm-daybox: 32px;                   /* ring frame: number + 4px each side */
-  position: relative;
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: var(--tm-daybox);
-  height: var(--tm-daybox);
-  margin: calc((var(--tm-num) - var(--tm-daybox)) / 2);
-}
-#time-management .hub-tm-month-day .hub-tm-month-num {
-  box-sizing: border-box;
-  width: var(--tm-num);
-  height: var(--tm-num);
-  min-width: 0;
-  padding: 0;
-  letter-spacing: 0;
-}
-#time-management .hub-tm-month-day > .hub-tm-ring {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
-[data-theme="solar-zen"] #time-management .hub-tm-month-day { --tm-num: 28px; --tm-daybox: 36px; }
-@media (max-width: 768px) {
-  #time-management .hub-tm-month-day { --tm-daybox: 28px; }
-  [data-theme="solar-zen"] #time-management .hub-tm-month-day { --tm-daybox: 32px; }
-}
