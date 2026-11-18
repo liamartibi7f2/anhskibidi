@@ -1,0 +1,352 @@
+/* ==========================================================================
+   wallet-os-topbar.css — Thanh trên cùng RIÊNG cho từng mục
+   --------------------------------------------------------------------------
+   body[data-section="finance"|"time"] do WalletTopbar.setSection() đặt.
+   Mặc định (chưa có thuộc tính) = Tài chính.
+
+   · TÀI CHÍNH  "Ledger Vault"  — bo tròn, đồng xu, dòng kẻ sổ cái, đường xé
+                                  chấm chấm, nút dạng viên thuốc.
+   · THỜI GIAN  "Chronograph"   — khung vuông có 4 góc ngắm, mặt đồng hồ chạy
+                                  giờ thật, thước 24h có vạch "bây giờ",
+                                  chữ mono in hoa, nút vuông.
+   · ADMIN      dùng chung ngôn ngữ thiết kế của từng mục (nút, banner, bảng
+                chọn người dùng, thông báo) và lấy màu từ theme hiện tại.
+
+   Chỉ dùng biến theme (--accent-primary, --bg-*, --glass-*...) nên chạy đủ
+   4 theme; Optimize = phẳng/vuông, Lite = không animation.
+   ========================================================================== */
+
+body {
+  --st-r: 18px;        /* bán kính khung lớn  */
+  --st-r-sm: 12px;     /* bán kính khung nhỏ  */
+  --st-line: var(--ember-brass-line, var(--glass-border));
+}
+body[data-section="time"] {
+  --st-r: 6px;
+  --st-r-sm: 4px;
+}
+
+/* ---------- Đổi logo + chữ theo mục ---------- */
+.st-logo--time,
+.st-brand--time { display: none; }
+body[data-section="time"] .st-logo--fin,
+body[data-section="time"] .st-brand--fin { display: none; }
+body[data-section="time"] .st-logo--time { display: grid; }
+body[data-section="time"] .st-brand--time { display: flex; }
+
+.standalone-topbar { isolation: isolate; }
+
+/* ==========================================================================
+   1. TÀI CHÍNH — "Ledger Vault"
+   ========================================================================== */
+body:not([data-section="time"]) .standalone-topbar {
+  border-radius: 20px;
+  padding-left: 24px;
+}
+/* Mép đồng xu (viền khía) bên trái */
+body:not([data-section="time"]) .standalone-topbar::before {
+  top: 16px; bottom: 16px; left: 0; right: auto;
+  width: 5px; height: auto;
+  border-radius: 0 4px 4px 0;
+  background: repeating-linear-gradient(180deg, var(--accent-primary) 0 2px, transparent 2px 4px);
+  opacity: .75;
+}
+/* Dòng kẻ sổ cái mờ dần về bên phải */
+body:not([data-section="time"]) .standalone-topbar::after {
+  content: "";
+  position: absolute; inset: 0; z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background: repeating-linear-gradient(180deg, transparent 0 23px, color-mix(in srgb, var(--accent-primary) 9%, transparent) 23px 24px);
+  -webkit-mask-image: linear-gradient(90deg, transparent 18%, #000 96%);
+          mask-image: linear-gradient(90deg, transparent 18%, #000 96%);
+}
+/* Logo: đồng xu */
+body:not([data-section="time"]) .standalone-topbar .st-logo--fin {
+  width: 42px; height: 42px;
+  border-radius: 50%;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .4),
+    0 0 0 3px var(--bg-surface),
+    0 0 0 4.5px var(--accent-primary),
+    0 6px 16px rgba(0, 0, 0, .3);
+}
+body:not([data-section="time"]) .standalone-topbar .st-wordmark {
+  font-size: 1.3rem;
+  letter-spacing: -.03em;
+}
+/* Đường xé phiếu (receipt) giữa hàng thương hiệu và hàng điều khiển */
+body:not([data-section="time"]) .standalone-topbar .standalone-controls {
+  border-top: 2px dotted color-mix(in srgb, var(--accent-primary) 30%, transparent);
+}
+/* Nút dạng viên thuốc */
+body:not([data-section="time"]) .standalone-topbar .standalone-btn,
+body:not([data-section="time"]) .standalone-topbar .standalone-select,
+body:not([data-section="time"]) .standalone-topbar .cloud-badge { border-radius: 999px; }
+body:not([data-section="time"]) .standalone-topbar .st-seg { border-radius: 999px; }
+body:not([data-section="time"]) .standalone-topbar .st-seg .standalone-btn { border-radius: 999px; }
+body:not([data-section="time"]) .standalone-topbar .cloud-badge {
+  background-color: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary) 32%, transparent);
+}
+
+/* ==========================================================================
+   2. THỜI GIAN — "Chronograph"
+   ========================================================================== */
+body[data-section="time"] .standalone-topbar {
+  border-radius: 6px;
+  padding-bottom: 30px;                 /* chỗ cho thước 24h */
+  background-image: linear-gradient(180deg, color-mix(in srgb, var(--accent-primary) 8%, transparent), transparent 65%);
+  box-shadow: var(--shadow-md), inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 16%, transparent);
+}
+/* 4 góc ngắm */
+body[data-section="time"] .standalone-topbar::before {
+  inset: -1px; width: auto; height: auto; opacity: 1; border-radius: 0;
+  background:
+    linear-gradient(var(--accent-primary), var(--accent-primary)) top left / 14px 2px no-repeat,
+    linear-gradient(var(--accent-primary), var(--accent-primary)) top left / 2px 14px no-repeat,
+    linear-gradient(var(--accent-primary), var(--accent-primary)) top right / 14px 2px no-repeat,
+    linear-gradient(var(--accent-primary), var(--accent-primary)) top right / 2px 14px no-repeat,
+    linear-gradient(var(--accent-primary), var(--accent-primary)) bottom left / 14px 2px no-repeat,
+    linear-gradient(var(--accent-primary), var(--accent-primary)) bottom left / 2px 14px no-repeat,
+    linear-gradient(var(--accent-primary), var(--accent-primary)) bottom right / 14px 2px no-repeat,
+    linear-gradient(var(--accent-primary), var(--accent-primary)) bottom right / 2px 14px no-repeat;
+}
+/* Thước 24 giờ: vạch dài = mỗi giờ, vạch ngắn = mỗi 15', vạch sáng = bây giờ */
+body[data-section="time"] .standalone-topbar::after {
+  content: "";
+  position: absolute; left: 18px; right: 18px; bottom: 8px; height: 12px; z-index: -1;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--accent-primary), var(--accent-primary)) calc(var(--tm-now, 50) * 1%) 100% / 2px 12px no-repeat,
+    linear-gradient(90deg, var(--accent-primary) 0 1px, transparent 1px) 0 100% / calc(100% / 24) 8px repeat-x,
+    linear-gradient(90deg, color-mix(in srgb, var(--accent-primary) 50%, transparent) 0 1px, transparent 1px) 0 100% / calc(100% / 96) 4px repeat-x,
+    linear-gradient(color-mix(in srgb, var(--accent-primary) 45%, transparent), color-mix(in srgb, var(--accent-primary) 45%, transparent)) 0 100% / 100% 1px no-repeat;
+}
+/* Logo: mặt đồng hồ chạy giờ thật */
+body[data-section="time"] .standalone-topbar .st-logo--time {
+  position: relative;
+  width: 42px; height: 42px;
+  border-radius: 50%;
+  color: var(--accent-primary);
+  background-color: var(--bg-deep);
+  background-image: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--accent-primary) 18%, transparent), transparent 70%);
+  box-shadow:
+    inset 0 0 0 1.5px var(--accent-primary),
+    0 0 0 3px var(--bg-surface),
+    0 0 0 4px color-mix(in srgb, var(--accent-primary) 45%, transparent),
+    0 6px 16px rgba(0, 0, 0, .3);
+}
+body[data-section="time"] .st-logo--time svg { width: 28px; height: 28px; }
+.st-hand {
+  transform-box: view-box;
+  transform-origin: 12px 12px;
+  transition: transform .8s cubic-bezier(.3, 1.4, .5, 1);
+}
+.st-hand--h { transform: rotate(var(--tm-h, 0deg)); }
+.st-hand--m { transform: rotate(var(--tm-m, 0deg)); }
+
+body[data-section="time"] .standalone-topbar .st-wordmark {
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+body[data-section="time"] .standalone-topbar .st-tagline {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono);
+  letter-spacing: .2em;
+}
+.st-clock {
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 50%, transparent);
+  border-radius: 2px;
+  color: var(--accent-primary);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .14em;
+}
+body[data-section="time"] .standalone-topbar .standalone-controls {
+  border-top: 1px solid color-mix(in srgb, var(--accent-primary) 28%, transparent);
+}
+/* Nút vuông, chữ mono in hoa */
+body[data-section="time"] .standalone-topbar .standalone-btn,
+body[data-section="time"] .standalone-topbar .standalone-select,
+body[data-section="time"] .standalone-topbar .cloud-badge {
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: .7rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+body[data-section="time"] .standalone-topbar .st-seg { border-radius: 4px; }
+body[data-section="time"] .standalone-topbar .st-seg .standalone-btn { border-radius: 2px; }
+body[data-section="time"] .standalone-topbar .cloud-badge {
+  background-color: color-mix(in srgb, var(--accent-primary) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary) 40%, transparent);
+}
+body[data-section="time"] .standalone-topbar .cloud-dot { border-radius: 1px; transform: rotate(45deg); }
+body[data-section="time"] .standalone-topbar .st-divider { border-radius: 0; }
+
+/* ==========================================================================
+   3. ADMIN — đồng bộ cho cả hai mục
+   ========================================================================== */
+
+/* Nút Admin: viền nét đứt = "quyền đặc biệt"; sáng lên khi đang xem người khác */
+.standalone-topbar .st-admin {
+  color: var(--accent-primary);
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--accent-primary) 55%, transparent);
+}
+.standalone-topbar .st-admin[aria-pressed="true"] { border-style: solid; }
+
+/* Đang xem tài khoản khác: huy hiệu con mắt trên logo (cả hai mục) */
+body.wallet-readonly .standalone-topbar .st-logo { position: relative; }
+body.wallet-readonly .standalone-topbar .st-logo::after {
+  content: "";
+  position: absolute; right: -6px; bottom: -6px;
+  width: 17px; height: 17px;
+  border-radius: 50%;
+  background-color: var(--accent-primary);
+  background-repeat: no-repeat; background-position: center; background-size: 11px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23111' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z'/%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3C/svg%3E");
+  box-shadow: 0 0 0 2px var(--bg-surface);
+}
+body[data-section="time"].wallet-readonly .standalone-topbar .st-logo::after { border-radius: 2px; }
+
+/* Banner "Đang xem..." */
+body .wa-banner {
+  gap: 10px 14px;
+  margin: 0 0 14px;
+  padding: 9px 14px;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent-primary) 13%, var(--bg-surface));
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 50%, transparent);
+  border-radius: var(--st-r-sm);
+  font-family: var(--font-body);
+  font-weight: 500;
+}
+body .wa-banner .wa-banner-badge {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--accent-primary);
+  color: var(--bg-deep);
+  font: 700 .62rem/1.2 var(--font-mono);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+body .wa-banner .wa-banner-text { min-width: 0; }
+body .wa-banner button {
+  background: transparent;
+  color: var(--accent-primary);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 55%, transparent);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font: 600 .74rem var(--font-body);
+}
+body .wa-banner button:hover { background: var(--accent-primary); color: var(--bg-deep); }
+body .wa-banner.is-error {
+  background: color-mix(in srgb, var(--danger, #ef4444) 16%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--danger, #ef4444) 60%, transparent);
+}
+body .wa-banner.is-error .wa-banner-badge { background: var(--danger, #ef4444); color: #fff; }
+body .wa-banner.is-error button { color: var(--text-primary); border-color: color-mix(in srgb, var(--danger, #ef4444) 60%, transparent); }
+body .wa-banner.is-error button:hover { background: var(--danger, #ef4444); color: #fff; }
+
+body[data-section="time"] .wa-banner {
+  border-radius: 4px;
+  background-image: repeating-linear-gradient(90deg, color-mix(in srgb, var(--accent-primary) 55%, transparent) 0 1px, transparent 1px 8px);
+  background-size: 100% 5px;
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+}
+body[data-section="time"] .wa-banner .wa-banner-badge,
+body[data-section="time"] .wa-banner button { border-radius: 2px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .08em; }
+
+/* Bảng chọn người dùng */
+body .wa-overlay .wa-panel {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 30%, var(--glass-border));
+  border-radius: var(--st-r);
+  box-shadow: var(--shadow-lg, 0 12px 40px rgba(0, 0, 0, .5));
+  font-family: var(--font-body);
+}
+body .wa-overlay .wa-panel h3 {
+  justify-content: flex-start;
+  gap: 10px;
+  border-bottom: 1px solid var(--glass-border);
+  font-weight: 700;
+}
+body .wa-overlay .wa-panel h3::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+}
+body .wa-overlay .wa-panel h3 .wa-x { margin-left: auto; }
+body .wa-overlay .wa-panel input {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--st-r-sm);
+}
+body .wa-overlay .wa-panel input:focus { outline: none; border-color: var(--accent-primary); }
+body .wa-overlay .wa-item { border-radius: var(--st-r-sm); }
+body .wa-overlay .wa-item:hover { background: color-mix(in srgb, var(--accent-primary) 12%, transparent); }
+body .wa-overlay .wa-item small { color: var(--text-muted); opacity: 1; }
+body .wa-toast {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--glass-border);
+  border-left: 4px solid var(--accent-primary);
+  border-radius: var(--st-r-sm);
+}
+
+body[data-section="time"] .wa-overlay .wa-panel h3 {
+  font-family: var(--font-mono);
+  font-size: .8rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+body[data-section="time"] .wa-overlay .wa-panel h3::before { border-radius: 1px; transform: rotate(45deg); }
+
+/* Thông báo "Admin đang xem / đã xem" (.wa-notice, .wa-live): giữ nguyên style
+   sẵn có trong hub-wallet-os.css (đã theo theme, có pill/viền riêng cho Ember). */
+
+/* ==========================================================================
+   4. Optimize (terminal phẳng) · Lite (không animation) · Responsive
+   ========================================================================== */
+body.theme-optimized .standalone-topbar,
+body.theme-optimized .standalone-topbar :is(.standalone-btn, .standalone-select, .cloud-badge, .st-seg, .st-logo),
+body.theme-optimized .wa-banner,
+body.theme-optimized .wa-banner :is(.wa-banner-badge, button),
+body.theme-optimized .wa-overlay .wa-panel,
+body.theme-optimized .wa-overlay .wa-panel input,
+body.theme-optimized .wa-overlay .wa-item { border-radius: 0 !important; }
+body.theme-optimized .standalone-topbar,
+body.theme-optimized .st-logo,
+body.theme-optimized .wa-overlay .wa-panel { box-shadow: none !important; }
+body.theme-optimized:not([data-section="time"]) .standalone-topbar::after { display: none; }
+body.theme-optimized:not([data-section="time"]) .standalone-topbar .standalone-controls { border-top-style: solid; }
+body.theme-optimized[data-section="time"] .standalone-topbar { background-image: none; }
+
+body.perf-lite .st-hand,
+body.theme-optimized .st-hand { transition: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .st-hand { transition: none; }
+}
+
+@media (max-width: 520px) {
+  body:not([data-section="time"]) .standalone-topbar { padding-left: 20px; }
+  body:not([data-section="time"]) .standalone-topbar .st-logo--fin,
+  body[data-section="time"] .standalone-topbar .st-logo--time { width: 36px; height: 36px; }
+  body[data-section="time"] .st-logo--time svg { width: 24px; height: 24px; }
+  body[data-section="time"] .standalone-topbar .st-wordmark { font-size: .98rem; letter-spacing: .12em; }
+  body[data-section="time"] .standalone-topbar .st-tagline { display: flex; font-size: .56rem; letter-spacing: .12em; }
+  body[data-section="time"] .st-tagline-text { display: none; }   /* chỉ giữ đồng hồ số */
+  body .wa-banner { padding: 8px 10px; }
+}
