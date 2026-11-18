@@ -3914,6 +3914,7 @@ body.theme-optimized .hub-tm-rv-track > span { border-radius: 0; }
 [data-theme="ember-noir"] .hub-tm-rv-col { border-bottom: 3px double rgba(224, 170, 100, 0.5); }
 [data-theme="ember-noir"] .hub-tm-rv-col i { border-radius: 2px 2px 0 0; }
 [data-theme="ember-noir"] .hub-tm-rv-ik { color: var(--ember-brass); }
+<<<<<<< HEAD
 
 /* ==========================================================================
    30. STREAK DAILY  ·  opt-in card in the Habitica Link
@@ -3971,3 +3972,5 @@ body.theme-optimized .hub-tm-hab-sdswitch,
 body.theme-optimized .hub-tm-hab-days button { border-radius: 0; }
 body.theme-optimized .hub-tm-hab-sdswitch[aria-checked="true"]::before { content: "["; }
 body.theme-optimized .hub-tm-hab-sdswitch[aria-checked="true"]::after { content: "]"; }
+=======
+>>>>>>> 2ff72396adac4c83cfd027de6d800b273dfa720e
