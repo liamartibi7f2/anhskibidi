@@ -3929,5 +3929,38 @@ body.theme-optimized .hub-tm-rv-track > span { border-radius: 0; }
 }
 @media (max-width: 768px) {
   #time-management .hub-tm-month-cell { padding: 6px 3px 4px; }
-  #time-management .hub-tm-ring { inset: -2px; width: calc(100% + 4px); height: calc(100% + 4px); }
+}
+
+/* The day number and its completion ring share one fixed frame, so the ring is always concentric with the
+   number whatever the theme does to the number itself (fill, border, tilt, square corners). The frame keeps
+   the number's own footprint (negative margin); the ring only overhangs it by a small, fixed amount. */
+#time-management .hub-tm-month-day {
+  --tm-num: 24px;                      /* size of the day number in this theme */
+  --tm-daybox: 32px;                   /* ring frame: number + 4px each side */
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--tm-daybox);
+  height: var(--tm-daybox);
+  margin: calc((var(--tm-num) - var(--tm-daybox)) / 2);
+}
+#time-management .hub-tm-month-day .hub-tm-month-num {
+  box-sizing: border-box;
+  width: var(--tm-num);
+  height: var(--tm-num);
+  min-width: 0;
+  padding: 0;
+  letter-spacing: 0;
+}
+#time-management .hub-tm-month-day > .hub-tm-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+[data-theme="solar-zen"] #time-management .hub-tm-month-day { --tm-num: 28px; --tm-daybox: 36px; }
+@media (max-width: 768px) {
+  #time-management .hub-tm-month-day { --tm-daybox: 28px; }
+  [data-theme="solar-zen"] #time-management .hub-tm-month-day { --tm-daybox: 32px; }
 }
