@@ -44,6 +44,20 @@ const timeManagementModule = (function () {
   ];
   const NOTIF_KEY    = 'hub_tm_notif';      // per device: { enabled, bgOnly }
   const SW_URL       = 'tm-sw.js';          // must sit next to index.html (see tm-sw.js)
+
+  /* Focus session: Start / Pause / Stop records the time you really focused on a block (block.focusMs, synced) */
+  const FS_KEY       = 'hub_tm_fsession';   // the running session, per account → survives a reload
+  const FS_MODE_KEY  = 'hub_tm_fmode';      // last chosen mode (per device)
+  const FS_MODES = {
+    block: { label: 'Timer',    hint: 'Counts the time you focus on this block' },
+    pomo:  { label: 'Pomodoro', hint: '25 min focus · 5 min break · 15 min every 4th', work: 25, brk: 5,  long: 15, every: 4 },
+    deep:  { label: 'Deep work', hint: '90 min focus · 15 min break',                   work: 90, brk: 15, long: 15, every: 0 }
+  };
+  const FS_QUICK       = [15, 25, 45, 90];  // quick-focus lengths (minutes)
+  const FS_EARLY_MIN   = 15;                // "Start early" is offered when the next block starts within this many minutes
+  const FS_MIN_MS      = 5000;              // a session shorter than this is treated as a mis-tap and not recorded
+  const FS_AWAY_LOAD   = 180000;            // page was closed longer than this → the restored session comes back paused
+  const FS_AWAY_TICK   = 1800000;           // gap this long between two ticks = computer slept → pause at the last heartbeat
   const VIEW_KEY     = 'hub_tm_view';
   const HINT_KEY     = 'hub_tm_hint_seen';
   const SLOT_H       = 36;
@@ -124,6 +138,9 @@ const timeManagementModule = (function () {
   let _msMap          = {};   // celebrated milestones: 'runStart|days' -> date. Add-only, synced with the account
   let _remoteT     = null;
   let _pendingClaim = null;
+  let _fs = null, _fsTimer = null, _fsSummary = null, _fsSig = '', _fsMiss = 0;     // focus session state
+  let _fsMode = (function () { const m = _lsGet(FS_MODE_KEY); return FS_MODES[m] ? m : 'block'; })();
+  let _fsQuick = 25;
   let _confirmCancelCb = null;
   let _ui          = new AbortController();   // document-level listeners of the current mount
 
@@ -221,7 +238,15 @@ const timeManagementModule = (function () {
   }
   function _tagOrFallback(id) { return _tagById(id) || FALLBACK_TAG; }
   function _tint(tag) { return Math.round(10 + (tag.opacity || 85) * 0.3); }
-  function _tagStyle(tag) { return '--tm-c:' + _safeColor(tag.color) + ';--tm-k:' + _tint(tag); }
+  /** Readable text colour (dark or light) for anything painted in the solid tag colour. */
+  function _inkFor(hex) {
+    const c = _safeColor(hex), ch = [1, 3, 5].map(function (i) {
+      const v = parseInt(c.slice(i, i + 2), 16) / 255;
+      return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    });
+    return (0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2]) > 0.4 ? '#10121a' : '#ffffff';
+  }
+  function _tagStyle(tag) { return '--tm-c:' + _safeColor(tag.color) + ';--tm-k:' + _tint(tag) + ';--tm-ink:' + _inkFor(tag.color); }
 
   /* ---- Blocks ---- */
   function _blockById(id) {
@@ -332,6 +357,7 @@ const timeManagementModule = (function () {
       habFp: b.habFp ? String(b.habFp).slice(0, 16) : '',
       habDone: b.habDone === true,
       gp: +b.gp > 0 ? Math.min(9999, Math.round(+b.gp * 100) / 100) : 0,       // gold this block earned in Habitica
+      focusMs: _clamp(Math.round(Number(b.focusMs) || 0), 0, 86400000),      // time really focused on this block (Focus session)
       checklist: _normCk(b.checklist),
       ckDel: Array.isArray(b.ckDel) ? b.ckDel.map(String).slice(0, CK_MAX) : [],
       updatedAt: Number(b.updatedAt) || 0
@@ -375,6 +401,7 @@ const timeManagementModule = (function () {
   }
   function _resetData() {
     _cancelDrag();
+    _fs = null; _fsSummary = null; _fsMiss = 0;     // the session of the previous account stays saved under that account
     _timeBlocks = []; _customTags = []; _templates = []; _activeTagId = 'work';
     _tombs = { blocks: {}, tags: {}, templates: {} };
     _settingsAt = 0;
@@ -472,6 +499,7 @@ const timeManagementModule = (function () {
     _afterDataReady(st);
   }
   function _afterDataReady(st) {
+    _fsRestore();                          // this account's running focus session, if any
     _habSeedKnown();                       // this account's To-Do ids count as already synced — Habitica must never read another account's blocks as "deleted"
     _habQueueSync(800);
     _loadAudio();                          // this device's alerts on/off switch
@@ -513,6 +541,8 @@ const timeManagementModule = (function () {
   function _wireSync() {
     if (_syncWired || typeof HubDB === 'undefined' || !HubDB) return;
     _syncWired = true;
+    if (typeof window !== 'undefined') window.addEventListener('pagehide', _fsBeat);
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', function () { if (document.hidden) _fsBeat(); });
     if (typeof HubDB.onAuthChange === 'function') HubDB.onAuthChange(_onAuth);
     if (typeof HubDB.subscribeTimeManagement === 'function') HubDB.subscribeTimeManagement(_onRemote);
     if (typeof window !== 'undefined') window.addEventListener('online', function () { if (_dataReady) _scheduleSave(); });   // push what was edited offline
@@ -670,6 +700,15 @@ const timeManagementModule = (function () {
         '</form>' +
       '</div>' +
 
+      '<form class="hub-tm-qp" id="hub-tm-qp" autocomplete="off">' +
+        '<label class="hub-tm-qp-field">' +
+          '<span class="hub-tm-qp-ico" aria-hidden="true"></span>' +
+          '<input type="text" class="hub-tm-qp-input" id="tm-qp-input" maxlength="600" spellcheck="false" aria-label="Quick plan" aria-describedby="tm-qp-hint" placeholder="Quick plan  ·  11:00 1h Plan Schedule | việc 1; việc 2">' +
+        '</label>' +
+        '<span class="hub-tm-qp-hint" id="tm-qp-hint" aria-live="polite"></span>' +
+        '<span class="hub-tm-qp-keys" title="Point at a block (or select it), then press a key" aria-hidden="true"><kbd>N</kbd>plan <kbd>E</kbd>edit <kbd>C</kbd>checklist <kbd>X</kbd>done</span>' +
+      '</form>' +
+
       '<div class="hub-tm-hint-bar hub-tm-hidden" id="hub-tm-hint">' +
         '<span>Drag on the grid to create a block · drag a block to move it · drag its edges to resize · click to edit. On touch, press and hold.</span>' +
         '<button type="button" id="tm-btn-hint-close" aria-label="Dismiss tip">&times;</button>' +
@@ -703,6 +742,13 @@ const timeManagementModule = (function () {
           '<div class="hub-tm-focus-progress">' +
             '<div class="hub-tm-focus-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="hub-tm-focus-fill"></div></div>' +
             '<span class="hub-tm-focus-label"></span>' +
+          '</div>' +
+          '<div class="hub-tm-fs" id="hub-tm-fs">' +
+            '<div class="hub-tm-fs-clock hub-tm-hidden" id="hub-tm-fs-clock" role="timer"><span class="hub-tm-fs-time" id="hub-tm-fs-time">00:00</span><span class="hub-tm-fs-sub" id="hub-tm-fs-sub"></span></div>' +
+            '<div class="hub-tm-fs-chips hub-tm-hidden" id="hub-tm-fs-modes" role="group" aria-label="Focus mode"></div>' +
+            '<div class="hub-tm-fs-chips hub-tm-hidden" id="hub-tm-fs-quick" role="group" aria-label="Quick focus length"></div>' +
+            '<p class="hub-tm-fs-note hub-tm-hidden" id="hub-tm-fs-note"></p>' +
+            '<div class="hub-tm-fs-actions" id="hub-tm-fs-actions"></div>' +
           '</div>' +
           '<button type="button" class="hub-tm-btn hub-tm-btn--outline" id="tm-btn-focus-exit">Exit Focus</button>' +
         '</div>' +
@@ -784,7 +830,7 @@ const timeManagementModule = (function () {
           '</div>' +
           '<footer class="hub-tm-dialog-foot hub-tm-dialog-foot--split hub-tm-insp-foot">' +
             '<button type="button" class="hub-tm-btn hub-tm-btn--alert" id="tm-btn-details-delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>Delete</button>' +
-            '<div class="hub-tm-insp-actions"><span class="hub-tm-insp-keys" aria-hidden="true"><kbd>Enter</kbd> save · <kbd>Esc</kbd> close</span>' +
+            '<div class="hub-tm-insp-actions"><span class="hub-tm-insp-keys" aria-hidden="true"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> save · <kbd>Esc</kbd> close</span>' +
               '<button type="button" class="hub-tm-btn hub-tm-btn--outline" data-close>Cancel</button>' +
               '<button type="button" class="hub-tm-btn hub-tm-btn--primary" id="tm-btn-details-save">Save changes</button></div>' +
           '</footer>' +
@@ -1011,6 +1057,7 @@ const timeManagementModule = (function () {
     _el('#tm-btn-focus-mode').addEventListener('click', _openFocus);
     _el('#tm-btn-focus-exit').addEventListener('click', function () { _closeModal(_el('#hub-tm-focus-panel')); });
     _el('.hub-tm-focus-backdrop').addEventListener('click', function () { _closeModal(_el('#hub-tm-focus-panel')); });
+    _el('#hub-tm-fs').addEventListener('click', _fsClick);
     _el('#tm-btn-settings').addEventListener('click', _openSettings);
     _el('#tm-btn-templates').addEventListener('click', _openTemplates);
     _el('#tm-btn-set-time').addEventListener('click', _openSetTime);
@@ -1037,6 +1084,7 @@ const timeManagementModule = (function () {
     _bindHabitica();
     _bindTagPop();
     _bindChecklist();
+    _bindQuickPlan();
 
     // One keyboard handler for the whole mount
     document.addEventListener('keydown', _onDocKey, sig);
@@ -1048,6 +1096,24 @@ const timeManagementModule = (function () {
       const t = _allTags()[parseInt(e.key, 10) - 1];
       if (t) { e.preventDefault(); _setActiveTag(t.id); _toast('Brush: ' + t.label); }
       return;
+    }
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing) {   // Ctrl+Enter saves the block dialog from anywhere inside it
+      const dlg = _modalStack[_modalStack.length - 1];
+      if (dlg && dlg.id === 'hub-tm-details-modal') { e.preventDefault(); _saveDetails(); return; }
+    }
+    if (e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat && !e.isComposing && !_modalStack.length && !_isTyping(e.target) &&
+        _sectionEl && _sectionEl.isConnected && !_sectionEl.classList.contains('hub-tm-hidden')) {
+      const k = e.key.toLowerCase();
+      if (k === 'n' || k === '/') { const q = _el('#tm-qp-input'); if (q) { e.preventDefault(); q.focus(); q.select(); } return; }
+      if (_view === 'day' && (k === 'e' || k === 'c' || k === 'x')) {
+        const el = _kbTarget(), b = el && _blockById(el.getAttribute('data-block-id'));
+        if (!b) return;
+        e.preventDefault();
+        if (k === 'e') _openDetails(b.id);
+        else if (k === 'x') _habToggleDone(b.id);
+        else _bkOpenAndFocus(el, b);
+        return;
+      }
     }
     if (e.key === 'Escape') {
       const pop = _el('#hub-tm-add-tag-form');
@@ -1179,6 +1245,7 @@ const timeManagementModule = (function () {
     if (opts && opts.animate) { body.classList.remove('hub-tm-enter'); void body.offsetWidth; body.classList.add('hub-tm-enter'); }
     _updateSummary();
     _tick();
+    _qpUpdate();
     if (!opts || opts.scroll !== false) _scrollInitial();
   }
 
@@ -1212,27 +1279,154 @@ const timeManagementModule = (function () {
   function _blockLabel(b) {
     return _tagOrFallback(b.tagId).label + ': ' + (b.title || '') + ', ' + b.startTime + ' to ' + b.endTime;
   }
+  /* ---- Checklist drawer on a block (Day view) ----
+     A pill on the block opens a panel with the full note + every checklist item.
+     Tick items right there; press the pill again (or Esc) to roll it back up. */
+  let _bkOpenIds = {};
+  function _bkBaseH(b) {
+    const s = _toMins(b.startTime); let e = _toMins(b.endTime);
+    if (e <= s) e = Math.min(DAY_MINS, s + CREATE_DUR);
+    return Math.max(18, Math.round((e - s) / 60 * HOUR_H));
+  }
+  function _bkKind(b, st) { return st.total || !b.subtitle ? 'checklist' : 'notes'; }
+  function _bkToggleLabel(b, st, open) {
+    return (st.total ? 'Checklist, ' + st.done + ' of ' + st.total + ' done. ' : (b.subtitle ? 'Notes. ' : 'Add a checklist. ')) + (open ? 'Hide' : 'Show');
+  }
+  function _bkFootHtml(b, st) {
+    return '<button type="button" class="hub-tm-bk-btn" data-bk-edit>Edit block</button>' +
+      (st.total && st.done === st.total && !b.done ? '<button type="button" class="hub-tm-bk-btn hub-tm-bk-btn--primary" data-bk-complete>Complete block</button>' : '');
+  }
+  function _bkPanelHtml(b, st, note) {
+    let h = '<div class="hub-tm-bk-panel" id="hub-tm-bk-' + _esc(b.id) + '">';
+    if (note) h += '<p class="hub-tm-bk-note">' + _esc(note) + '</p>';
+    if (st.total) {
+      h += '<div class="hub-tm-bk-prog" aria-hidden="true"><span style="width:' + st.pct + '%"></span></div><ul class="hub-tm-bk-list">';
+      _ck(b).forEach(function (it) {
+        h += '<li class="hub-tm-bk-row' + (it.done ? ' is-done' : '') + '"><label>' +
+          '<input type="checkbox" data-bk-ck="' + _esc(it.id) + '"' + (it.done ? ' checked' : '') + '>' +
+          '<span class="hub-tm-bk-box" aria-hidden="true"></span><span class="hub-tm-bk-txt">' + _esc(it.text) + '</span></label></li>';
+      });
+      h += '</ul>';
+    }
+    h += '<div class="hub-tm-bk-add"><span aria-hidden="true">+</span><input type="text" data-bk-new maxlength="200" autocomplete="off" placeholder="Add item — Enter · paste a list for many" aria-label="New checklist item"></div>';
+    return h + '<div class="hub-tm-bk-foot">' + _bkFootHtml(b, st) + '</div></div>';
+  }
+  function _bkRefresh(el, b) {
+    const st = _ckStats(b), t = el.querySelector('.hub-tm-bk-toggle');
+    if (t) {
+      const c = t.querySelector('.hub-tm-bk-count');
+      if (c) c.textContent = st.done + '/' + st.total;
+      t.style.setProperty('--p', st.pct + '%');
+      t.classList.toggle('is-complete', st.total > 0 && st.done === st.total);
+      t.setAttribute('aria-label', _bkToggleLabel(b, st, el.classList.contains('is-open')));
+    }
+    const bar = el.querySelector('.hub-tm-bk-prog span'); if (bar) bar.style.width = st.pct + '%';
+    const foot = el.querySelector('.hub-tm-bk-foot'); if (foot) foot.innerHTML = _bkFootHtml(b, st);
+  }
+  /** Swap one block's element for a fresh render (keeps the drawer open via _bkOpenIds). */
+  function _bkReplace(el, b) {
+    const fresh = _makeBlockEl(b);
+    el.replaceWith(fresh);
+    _updatePast();
+    return fresh;
+  }
+  /** Add one or many checklist items to a block from the drawer. */
+  function _bkAddItems(el, b, texts) {
+    const list = _ck(b); let n = 0, full = false;
+    texts.forEach(function (t) {
+      t = String(t).replace(/^\s*(?:[-*\u2022]|\d+[.)])\s+/, '').replace(/\s+/g, ' ').trim().slice(0, 200);
+      if (!t) return;
+      if (list.length >= CK_MAX) { full = true; return; }
+      list.push(_ckNewItem(t)); n++;
+    });
+    if (full) _toast('A checklist can have up to ' + CK_MAX + ' items.');
+    if (!n) return false;
+    _bkOpenIds[b.id] = 1;
+    _scheduleSave();
+    _fckSig = '';
+    const fresh = _bkReplace(el, b), inp = fresh.querySelector('[data-bk-new]');
+    if (inp) inp.focus({ preventScroll: true });
+    try { fresh.scrollIntoView({ block: 'nearest' }); } catch (_) {}
+    _tlRefresh();
+    return true;
+  }
+  /* Keyboard target: the block under the pointer, else the one that has focus */
+  let _hoverBlockId = '';
+  function _kbTarget() {
+    let el = _hoverBlockId ? _el('.hub-tm-block[data-block-id="' + _hoverBlockId + '"]') : null;
+    if (!el) { const a = document.activeElement; el = a && a.closest ? a.closest('.hub-tm-block') : null; }
+    return el;
+  }
+  function _bkOpenAndFocus(el, b) {
+    if (!el.classList.contains('is-open')) _bkToggle(el, b);
+    const inp = el.querySelector('[data-bk-new]');
+    if (inp) inp.focus({ preventScroll: true });
+  }
+
+  function _bkToggle(el, b) {
+    const open = !el.classList.contains('is-open'), base = _bkBaseH(b), st = _ckStats(b);
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const btn = el.querySelector('.hub-tm-bk-toggle');
+    if (el._bkT) { clearTimeout(el._bkT); el._bkT = 0; }
+    if (open) {
+      _bkOpenIds[b.id] = 1;
+      el.style.setProperty('--tm-open-h', 'auto');
+      el.classList.add('is-open');
+      if (!reduce) {
+        const full = el.offsetHeight;                                  // natural height with the panel showing
+        el.style.setProperty('--tm-open-h', base + 'px');
+        void el.offsetHeight;
+        el.style.setProperty('--tm-open-h', full + 'px');
+        el._bkT = setTimeout(function () { el.style.setProperty('--tm-open-h', 'auto'); }, 300);
+      }
+      setTimeout(function () { try { el.scrollIntoView({ block: 'nearest', behavior: reduce ? 'auto' : 'smooth' }); } catch (_) {} }, reduce ? 0 : 280);
+    } else {
+      delete _bkOpenIds[b.id];
+      if (reduce) { el.classList.remove('is-open'); el.style.removeProperty('--tm-open-h'); }
+      else {
+        el.style.setProperty('--tm-open-h', el.offsetHeight + 'px');
+        void el.offsetHeight;
+        el.style.setProperty('--tm-open-h', base + 'px');
+        el._bkT = setTimeout(function () { el.classList.remove('is-open'); el.style.removeProperty('--tm-open-h'); }, 280);
+      }
+    }
+    if (btn) {
+      btn.setAttribute('aria-expanded', String(open));
+      btn.setAttribute('aria-label', _bkToggleLabel(b, st, open));
+      btn.title = (open ? 'Hide ' : 'Show ') + _bkKind(b, st);
+    }
+  }
+
   function _makeBlockEl(b) {
     const s = _toMins(b.startTime);
-    let e = _toMins(b.endTime);
-    if (e <= s) e = Math.min(DAY_MINS, s + CREATE_DUR);
     const tag = _tagOrFallback(b.tagId);
     const el = document.createElement('div');
-    el.className = 'hub-tm-block' + (b.done ? ' is-done' : '') + (_habIsOverdue(b) ? ' is-overdue' : '');
+    const note = _plainText(b.subtitle), ck = _ckStats(b);
+    const hasPanel = true, empty = !ck.total && !note;
+    const open = !!_bkOpenIds[b.id];
+    el.className = 'hub-tm-block' + (b.done ? ' is-done' : '') + (_habIsOverdue(b) ? ' is-overdue' : '') + (open ? ' is-open' : '');
     el.setAttribute('data-block-id', b.id);
     el.setAttribute('role', 'button');
     el.setAttribute('tabindex', '0');
     el.setAttribute('aria-label', _blockLabel(b) + '. Enter to edit, arrow keys to move, Shift plus arrows to resize, Delete to remove.');
-    el.style.cssText = _tagStyle(tag) + ';top:' + Math.round(s / 60 * HOUR_H) + 'px;height:' + Math.max(18, Math.round((e - s) / 60 * HOUR_H)) + 'px';
-    const note = _plainText(b.subtitle), ck = _ckStats(b);
+    el.style.cssText = _tagStyle(tag) + ';top:' + Math.round(s / 60 * HOUR_H) + 'px;height:' + _bkBaseH(b) + 'px;--tm-base:' + _bkBaseH(b) + 'px';
+    const toggle = hasPanel
+      ? '<button type="button" class="hub-tm-bk-toggle' + (ck.total && ck.done === ck.total ? ' is-complete' : '') + (empty ? ' is-empty' : '') + '" style="--p:' + ck.pct + '%" aria-expanded="' + open + '" aria-controls="hub-tm-bk-' + _esc(b.id) + '" aria-label="' + _esc(_bkToggleLabel(b, ck, open)) + '" title="' + (open ? 'Hide ' : 'Show ') + _bkKind(b, ck) + '">' +
+          (ck.total ? '<svg class="hub-tm-bk-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="hub-tm-bk-count">' + ck.done + '/' + ck.total + '</span>' : '<span class="hub-tm-bk-count">' + (note ? 'Notes' : '+ Checklist') + '</span>') +
+          '<svg class="hub-tm-bk-chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>'
+      : '';
     el.innerHTML =
       '<div class="hub-tm-block-grip hub-tm-block-grip--top" aria-hidden="true"></div>' +
       '<div class="hub-tm-block-body">' +
-        '<span class="hub-tm-block-time">' + _esc(b.startTime) + ' – ' + _esc(b.endTime) + '</span>' +
+        '<div class="hub-tm-bk-head">' +
+          '<span class="hub-tm-block-time">' + _esc(b.startTime) + ' – ' + _esc(b.endTime) + '</span>' +
+          toggle +
+          (b.focusMs >= 60000 ? '<span class="hub-tm-block-focus" title="Time really focused on this block">&#9201; ' + _fmtDur(Math.round(b.focusMs / 60000)) + '</span>' : '') +
+        '</div>' +
         '<span class="hub-tm-block-title">' + _esc(b.title || tag.label) + '</span>' +
-        (ck.total ? '<span class="hub-tm-block-ck' + (ck.done === ck.total ? ' is-complete' : '') + '" title="Checklist: ' + ck.done + ' of ' + ck.total + ' done">&#10003; ' + ck.done + '/' + ck.total + '</span>' : '') +
         (note ? '<span class="hub-tm-block-note">' + _esc(note.slice(0, 160)) + '</span>' : '') +
       '</div>' +
+      (hasPanel ? _bkPanelHtml(b, ck, note) : '') +
       '<div class="hub-tm-block-grip hub-tm-block-grip--bottom" aria-hidden="true"></div>' +
       '<button type="button" class="hub-tm-block-check" aria-label="Toggle complete" title="Complete (scores the Habitica To-Do)" tabindex="-1">&#10003;</button>' +
       '<button type="button" class="hub-tm-block-delete" aria-label="Delete block" title="Delete block" tabindex="-1">&times;</button>';
@@ -1530,7 +1724,8 @@ const timeManagementModule = (function () {
       return '<span style="' + _tagStyle(t) + ';flex:' + per[id] + '" title="' + _esc(t.label) + ' · ' + _fmtDur(per[id]) + '"></span>';
     }).join('');
     const gold = list.reduce(function (g, b) { return g + (b.gp || 0); }, 0);
-    box.innerHTML = lead + stat('Planned', _fmtDur(total)) + stat('Blocks', list.length) +
+    const focused = list.reduce(function (g, b) { return g + (b.focusMs || 0); }, 0);
+    box.innerHTML = lead + stat('Planned', _fmtDur(total)) + (focused >= 60000 ? stat('Focused', _fmtDur(Math.round(focused / 60000))) : '') + stat('Blocks', list.length) +
       (gold > 0 ? '<span class="hub-tm-stat hub-tm-stat--gold"><span class="hub-tm-stat-k">Gold</span><strong>+' + _fmtGold(gold) + '</strong></span>' : '') +
       '<div class="hub-tm-summary-bar" aria-hidden="true">' + seg + '</div>';
   }
@@ -1702,6 +1897,20 @@ const timeManagementModule = (function () {
     scroll.addEventListener('touchmove', function (e) { if (_drag && _drag.active && e.cancelable) e.preventDefault(); }, { passive: false, signal: _ui.signal });
     scroll.addEventListener('contextmenu', function (e) { if (_drag) e.preventDefault(); }, sig);
     scroll.addEventListener('click', _onGridClick, sig);
+    scroll.addEventListener('change', _onGridChange, sig);
+    scroll.addEventListener('mouseover', function (e) { const bl = e.target.closest && e.target.closest('.hub-tm-block'); _hoverBlockId = bl ? bl.getAttribute('data-block-id') : ''; }, sig);
+    scroll.addEventListener('mouseleave', function () { _hoverBlockId = ''; }, sig);
+    scroll.addEventListener('focusin', function (e) { if (e.target.classList && e.target.classList.contains('hub-tm-block')) _hoverBlockId = ''; }, sig);
+    scroll.addEventListener('paste', function (e) {                 // paste a list into the drawer → one item per line
+      const t = e.target;
+      if (!t.hasAttribute || !t.hasAttribute('data-bk-new')) return;
+      const txt = ((e.clipboardData || window.clipboardData).getData('text') || '').trim();
+      if (!/\r?\n/.test(txt)) return;
+      const el = t.closest('.hub-tm-block'), b = el && _blockById(el.getAttribute('data-block-id'));
+      if (!b) return;
+      e.preventDefault();
+      _bkAddItems(el, b, txt.split(/\r?\n/));
+    }, sig);
     scroll.addEventListener('keydown', _onGridKey, sig);
   }
 
@@ -1715,8 +1924,9 @@ const timeManagementModule = (function () {
   function _onPointerDown(e) {
     if (_view !== 'day' || _drag) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
-    if (!e.target.closest('.hub-tm-main-col') || e.target.closest('.hub-tm-block-delete') || e.target.closest('.hub-tm-block-check')) return;
+    if (!e.target.closest('.hub-tm-main-col') || e.target.closest('.hub-tm-block-delete') || e.target.closest('.hub-tm-block-check') || e.target.closest('.hub-tm-bk-toggle') || e.target.closest('.hub-tm-bk-panel')) return;
     const blockEl = e.target.closest('.hub-tm-block');
+    if (blockEl && blockEl.classList.contains('is-open')) return;     // roll the checklist up first, then move / resize
     const block = blockEl ? _blockById(blockEl.getAttribute('data-block-id')) : null;
     if (blockEl && !block) return;
     const grip = e.target.closest('.hub-tm-block-grip');
@@ -1775,32 +1985,107 @@ const timeManagementModule = (function () {
     } else {
       d.el.classList.add('hub-tm-block--busy');
     }
+    _dgOpen(d);
     _applyDragAt(d.lastY);
+  }
+
+  /* ── Drag HUD: snap rules, free-lane, origin outline and a live readout ── */
+  const DG_VERB = { create: 'New', move: 'Move', 'resize-top': 'Start', 'resize-bottom': 'End' };
+  function _dgOpen(d) {
+    const col = _mainCol();
+    if (!col) return;
+    const tag = d.mode === 'create' ? _tagOrFallback(_activeTagId) : _tagOrFallback(d.block.tagId);
+    const h = document.createElement('div');
+    h.className = 'hub-tm-dg';
+    h.setAttribute('aria-hidden', 'true');
+    h.setAttribute('data-mode', d.mode);
+    h.style.cssText = _tagStyle(tag);
+    h.innerHTML =
+      '<i class="hub-tm-dg-lane"></i>' +
+      (d.orig ? '<i class="hub-tm-dg-orig"></i>' : '') +
+      '<i class="hub-tm-dg-line hub-tm-dg-line--s"><b></b></i>' +
+      '<i class="hub-tm-dg-line hub-tm-dg-line--e"><b></b></i>' +
+      '<div class="hub-tm-dg-tip"><span class="hub-tm-dg-verb"></span><span class="hub-tm-dg-range"></span><span class="hub-tm-dg-dur"></span></div>';
+    col.appendChild(h);
+    col.classList.add('is-dragging');
+    col.setAttribute('data-drag', d.mode);
+    d.hud = h;
+    const lane = h.querySelector('.hub-tm-dg-lane');
+    lane.style.top = Math.round(d.bounds[0] / 60 * HOUR_H) + 'px';
+    lane.style.height = Math.round((d.bounds[1] - d.bounds[0]) / 60 * HOUR_H) + 'px';
+    if (d.orig) {
+      const o = h.querySelector('.hub-tm-dg-orig');
+      o.style.top = Math.round(d.orig.s / 60 * HOUR_H) + 'px';
+      o.style.height = Math.max(18, Math.round((d.orig.e - d.orig.s) / 60 * HOUR_H)) + 'px';
+    }
+  }
+  function _dgUpdate(d, s, e, limited) {
+    const h = d.hud;
+    if (!h) return;
+    const ls = h.querySelector('.hub-tm-dg-line--s'), le = h.querySelector('.hub-tm-dg-line--e'), tip = h.querySelector('.hub-tm-dg-tip');
+    ls.style.top = Math.round(s / 60 * HOUR_H) + 'px';
+    le.style.top = Math.round(e / 60 * HOUR_H) + 'px';
+    ls.firstChild.textContent = _toTime(s);
+    le.firstChild.textContent = e >= DAY_MINS ? '24:00' : _toTime(e);
+    h.classList.toggle('is-limit', !!limited);
+    const below = s < 75;                                           // no room above → hang the readout under the block
+    h.classList.toggle('is-below', below);
+    tip.style.top = Math.round((below ? e : s) / 60 * HOUR_H) + 'px';
+    let verb = DG_VERB[d.mode];
+    if (limited) verb = 'Limit';
+    else if (d.mode === 'move' && d.orig) {
+      const dm = s - d.orig.s;
+      verb = dm ? (dm > 0 ? '+' : '−') + _fmtDur(Math.abs(dm)) : 'Move';
+    }
+    tip.querySelector('.hub-tm-dg-verb').textContent = verb;
+    tip.querySelector('.hub-tm-dg-range').textContent = _toTime(s) + ' – ' + (e >= DAY_MINS ? '24:00' : _toTime(e));
+    tip.querySelector('.hub-tm-dg-dur').textContent = _fmtDur(e - s);
+  }
+  function _dgClose(d) {
+    if (d.hud && d.hud.parentNode) d.hud.parentNode.removeChild(d.hud);
+    d.hud = null;
+    const col = _mainCol();
+    if (col) { col.classList.remove('is-dragging'); col.removeAttribute('data-drag'); }
+  }
+  function _dropFx(id) {
+    const n = _el('.hub-tm-block[data-block-id="' + id + '"]');
+    if (!n) return;
+    n.classList.add('hub-tm-block--drop');
+    setTimeout(function () { n.classList.remove('hub-tm-block--drop'); }, 650);
   }
 
   function _applyDragAt(clientY) {
     const d = _drag;
     if (!d || !d.active) return;
     const m = _yToMins(clientY);
-    let s, e;
+    let s, e, limited = false;
     if (d.mode === 'create') {
       const lo = Math.min(d.raw0, m), hi = Math.max(d.raw0, m);
       s = _snap(lo, 'down'); e = _snap(hi, 'up');
       if (e - s < CREATE_DUR) e = s + CREATE_DUR;
+      const ws = s, we = e;
       s = _clamp(s, d.bounds[0], d.bounds[1] - MIN_DUR);
       e = _clamp(e, s + MIN_DUR, d.bounds[1]);
+      limited = ws < s || we > e;
     } else if (d.mode === 'move') {
       const dur = d.orig.e - d.orig.s;
-      s = _clamp(d.orig.s + _snap(m - d.raw0, 'round'), d.bounds[0], d.bounds[1] - dur);
+      const ws = d.orig.s + _snap(m - d.raw0, 'round');
+      s = _clamp(ws, d.bounds[0], d.bounds[1] - dur);
       e = s + dur;
+      limited = ws !== s;
     } else if (d.mode === 'resize-bottom') {
       s = d.orig.s;
-      e = _clamp(_snap(m, 'round'), d.orig.s + MIN_DUR, d.bounds[1]);
+      const we = _snap(m, 'round');
+      e = _clamp(we, d.orig.s + MIN_DUR, d.bounds[1]);
+      limited = we > e;
     } else {
       e = d.orig.e;
-      s = _clamp(_snap(m, 'round'), d.bounds[0], d.orig.e - MIN_DUR);
+      const ws = _snap(m, 'round');
+      s = _clamp(ws, d.bounds[0], d.orig.e - MIN_DUR);
+      limited = ws < s;
     }
     d.cur = { s: s, e: e };
+    _dgUpdate(d, s, e, limited);
     const n = d.mode === 'create' ? d.ghost : d.el;
     if (!n) return;
     n.style.top = Math.round(s / 60 * HOUR_H) + 'px';
@@ -1829,6 +2114,7 @@ const timeManagementModule = (function () {
     if (!d) return;
     if (d.timer) clearTimeout(d.timer);
     if (d.scrollTimer) clearInterval(d.scrollTimer);
+    _dgClose(d);
     try { _el('#hub-tm-grid-scroll').releasePointerCapture(d.pointerId); } catch (_) {}
     _drag = null;
   }
@@ -1860,6 +2146,7 @@ const timeManagementModule = (function () {
         }
         _renderDayBlocks();
         _focusBlock(block.id);
+        _dropFx(block.id);
       }
       return;
     }
@@ -1888,11 +2175,191 @@ const timeManagementModule = (function () {
     _renderDayBlocks();
     _updateSummary();
     _focusBlock(b.id);
+    _dropFx(b.id);
     return b;
+  }
+
+  /* ============================================================
+     QUICK PLAN  ·  one line → one block (+ its checklist)
+       [time | range] [duration] [#tag] title | item; item; item
+       11:00 1h Plan Schedule | viết journal; làm bài tiểu luận
+       @9h30 45p #study Đọc sách      ·      9:00-10:30 Họp      ·      1h30 Deep work
+     Time: 11:00 · 9am · 9:30pm · @9 · @9h30 · 11:00-12:30 · now.   Duration: 1h · 90m · 45p · 1h30.
+     No time → the next free slot.  Tag → #work, #study, #2 …   Items → after "|", split by ";".
+     ============================================================ */
+  function _qpClock(tok, forced) {
+    const m = /^(\d{1,2})(?:[:h](\d{2})?)?(am|pm)?$/i.exec(tok);
+    if (!m) return null;
+    if (!forced && !(tok.indexOf(':') > -1 || m[3])) return null;      // bare "11" or "9h30" is only a time after "@"
+    let h = parseInt(m[1], 10);
+    const mi = m[2] ? parseInt(m[2], 10) : 0;
+    if (m[3]) { if (h < 1 || h > 12) return null; h = h % 12 + (/pm/i.test(m[3]) ? 12 : 0); }
+    if (mi > 59 || h > 24 || (h === 24 && mi > 0)) return null;
+    return h * 60 + mi;
+  }
+  function _qpRange(tok) {
+    const m = /^(@?)([^-\u2013]+)[-\u2013](@?)([^-\u2013]+)$/.exec(tok);
+    if (!m) return null;
+    const f = !!(m[1] || m[3]), a = _qpClock(m[2], f), b = _qpClock(m[4], f);
+    return a !== null && b !== null ? [a, b] : null;
+  }
+  function _qpDur(tok) {
+    let m;
+    if ((m = /^(\d+(?:[.,]\d+)?)h$/i.exec(tok))) return Math.round(parseFloat(m[1].replace(',', '.')) * 60);
+    if ((m = /^(\d+)h(\d{1,2})$/i.exec(tok))) return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+    if ((m = /^(\d+)(?:min|phut|ph|m|p)$/i.exec(tok))) return parseInt(m[1], 10);
+    return null;
+  }
+  function _qpTag(name) {
+    const n = name.toLowerCase(), all = _allTags();
+    if (/^\d+$/.test(n)) return all[parseInt(n, 10) - 1] || null;
+    return all.find(function (t) { return t.id.toLowerCase() === n || t.label.toLowerCase() === n; }) ||
+           all.find(function (t) { return t.label.toLowerCase().indexOf(n) === 0 || t.id.toLowerCase().indexOf(n) === 0; }) || null;
+  }
+  function _qpBase(date) {
+    if (date !== _todayStr()) return 9 * 60;
+    const d = new Date();
+    return Math.ceil((d.getHours() * 60 + d.getMinutes()) / SNAP) * SNAP;
+  }
+  /** First free window of `dur` minutes on `date`, starting the search at `from` (then wrapping to the top of the day). */
+  function _qpFindFree(date, dur, from) {
+    for (let pass = 0; pass < 2; pass++) {
+      for (let c = pass ? 0 : from; c + dur <= DAY_MINS && (pass === 0 || c < from); c += SNAP) {
+        if (!_overlap(date, c, c + dur)) return c;
+      }
+    }
+    return null;
+  }
+  function _qpParse(raw) {
+    raw = String(raw || '').replace(/\s+/g, ' ').trim();
+    if (!raw) return { empty: true };
+    const bar = raw.indexOf('|');
+    const head = (bar < 0 ? raw : raw.slice(0, bar)).trim();
+    const items = (bar < 0 ? '' : raw.slice(bar + 1)).split(';').map(function (x) { return x.trim(); }).filter(Boolean);
+    const date = _currentDate, words = [];
+    let start = null, end = null, dur = null, tag = null, lead = true;
+    const toks = head.split(' ').filter(Boolean);
+    for (let i = 0; i < toks.length; i++) {
+      const tok = toks[i];
+      let m, v;
+      if ((m = /^#(\S+)$/.exec(tok))) {
+        tag = _qpTag(m[1]);
+        if (!tag) return { error: 'No tag “#' + m[1] + '”. Try ' + _allTags().slice(0, 3).map(function (t) { return '#' + t.label.toLowerCase(); }).join(' ') + '.' };
+        continue;
+      }
+      if (lead) {
+        if (/^now$/i.test(tok)) { start = _qpBase(date); continue; }
+        if ((v = _qpRange(tok))) { start = v[0]; end = v[1]; continue; }
+        v = tok.charAt(0) === '@' ? _qpClock(tok.slice(1), true) : _qpClock(tok, false);
+        if (v !== null) { start = v; continue; }
+        v = _qpDur(tok);
+        if (v !== null) { dur = v; continue; }
+        lead = false;
+      }
+      words.push(tok);
+    }
+    const tg = tag || _tagOrFallback(_activeTagId), tagId = tg.id === FALLBACK_TAG.id ? 'work' : tg.id;
+    const title = words.join(' ').slice(0, 120);
+    let s, e, shortened = false;
+    if (dur !== null && dur < MIN_DUR) dur = MIN_DUR;
+    if (start !== null) {
+      s = start;
+      if (s >= DAY_MINS) return { error: 'That start time is past midnight.' };
+      e = end !== null ? end : s + (dur || 60);
+      if (end !== null && end === 0) e = DAY_MINS;
+      if (e <= s) return { error: 'End must be after start.' };
+      if (e > DAY_MINS) e = DAY_MINS;
+      const fb = _freeBounds(date, s);
+      if (fb[1] - s < MIN_DUR) {
+        const hit = _others(date).find(function (o) { return s >= o.s && s < o.e; }) || _others(date).find(function (o) { return o.s === s; });
+        return { error: 'Taken' + (hit ? ': ' + hit.b.startTime + '–' + hit.b.endTime + ' “' + (hit.b.title || _tagOrFallback(hit.b.tagId).label) + '”' : '') + '.' };
+      }
+      if (e > fb[1]) { e = fb[1]; shortened = true; }
+    } else {
+      const d = dur || 60;
+      s = _qpFindFree(date, d, _qpBase(date));
+      if (s === null) return { error: 'No free ' + _fmtDur(d) + ' left on this day.' };
+      e = s + d;
+    }
+    return { s: s, e: e, tagId: tagId, tag: tg, title: title, items: items, shortened: shortened };
+  }
+  function _qpUpdate() {
+    const inp = _el('#tm-qp-input'), out = _el('#tm-qp-hint'), form = _el('#hub-tm-qp');
+    if (!inp || !out || !form) return;
+    const r = _qpParse(inp.value);
+    out.classList.toggle('is-error', !!r.error);
+    if (r.empty) {
+      const tg = _tagOrFallback(_activeTagId), f = _qpFindFree(_currentDate, 60, _qpBase(_currentDate));
+      form.style.setProperty('--tm-c', _safeColor(tg.color));
+      out.textContent = f !== null ? 'Next free ' + _toTime(f) + ' · ' + tg.label : '';
+      return;
+    }
+    if (r.error) { out.textContent = r.error; return; }
+    form.style.setProperty('--tm-c', _safeColor(r.tag.color));
+    out.textContent = _toTime(r.s) + '–' + _toTime(r.e) + ' · ' + r.tag.label + (r.items.length ? ' · ' + r.items.length + ' item' + (r.items.length > 1 ? 's' : '') : '') + (r.shortened ? ' · fits before the next block' : '');
+  }
+  function _qpSubmit() {
+    const inp = _el('#tm-qp-input');
+    if (!inp) return;
+    const r = _qpParse(inp.value);
+    if (r.empty) return;
+    if (r.error) { _qpUpdate(); return; }
+    const b = _normBlock({
+      id: _newId(), date: _currentDate, tagId: r.tagId, startTime: _toTime(r.s), endTime: _toTime(r.e),
+      title: r.title || r.tag.label, subtitle: '', createdAt: Date.now(),
+      checklist: r.items.slice(0, CK_MAX).map(function (t) { return { text: t }; })
+    });
+    if (!b) return;
+    _timeBlocks.push(b);
+    _scheduleSave();
+    if (_view === 'day') {
+      _renderDayBlocks(); _updateSummary(); _dropFx(b.id);
+      const n = _el('.hub-tm-block[data-block-id="' + b.id + '"]');
+      if (n) { try { n.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (_) {} }
+    } else _renderGrid({ animate: false, scroll: false });
+    _tlRefresh();
+    inp.value = '';
+    _qpUpdate();
+    _toast('Planned ' + b.startTime + '–' + b.endTime + ' · ' + b.title, {
+      action: 'Undo',
+      onAction: function () {
+        _timeBlocks = _timeBlocks.filter(function (x) { return x.id !== b.id; });
+        _scheduleSave();
+        _renderGrid({ animate: false, scroll: false });
+        _tlRefresh();
+      }
+    });
+  }
+  function _bindQuickPlan() {
+    const form = _el('#hub-tm-qp'), inp = _el('#tm-qp-input');
+    if (!form || !inp) return;
+    const sig = { signal: _ui.signal };
+    inp.addEventListener('input', _qpUpdate, sig);
+    inp.addEventListener('focus', _qpUpdate, sig);
+    inp.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape') return;
+      e.preventDefault(); e.stopPropagation();
+      if (inp.value) { inp.value = ''; _qpUpdate(); } else inp.blur();
+    }, sig);
+    form.addEventListener('submit', function (e) { e.preventDefault(); _qpSubmit(); }, sig);
+    _qpUpdate();
   }
 
   function _onGridClick(e) {
     if (performance.now() < _suppressClickUntil) return;
+    const tg = e.target.closest('.hub-tm-bk-toggle');
+    if (tg) {
+      const te = tg.closest('.hub-tm-block'), tb = te && _blockById(te.getAttribute('data-block-id'));
+      if (tb) _bkToggle(te, tb);
+      return;
+    }
+    const pn = e.target.closest('.hub-tm-bk-panel');
+    if (pn) {
+      const pe = pn.closest('.hub-tm-block'), pid = pe && pe.getAttribute('data-block-id');
+      if (e.target.closest('[data-bk-edit]')) _openDetails(pid);
+      else if (e.target.closest('[data-bk-complete]')) _habToggleDone(pid);
+      return;                                                         // ticking / reading never opens the editor
+    }
     const chk = e.target.closest('.hub-tm-block-check');
     if (chk) {
       const ce = chk.closest('.hub-tm-block');
@@ -1916,12 +2383,41 @@ const timeManagementModule = (function () {
     }
   }
 
+  /** Tick a checklist item straight from the block. Updates in place so the drawer stays open. */
+  function _onGridChange(e) {
+    const cb = e.target.closest && e.target.closest('[data-bk-ck]');
+    if (!cb) return;
+    const el = cb.closest('.hub-tm-block'), b = el && _blockById(el.getAttribute('data-block-id'));
+    const it = b && _ck(b).find(function (i) { return i.id === cb.getAttribute('data-bk-ck'); });
+    if (!it) return;
+    it.done = cb.checked;
+    const row = cb.closest('.hub-tm-bk-row'); if (row) row.classList.toggle('is-done', cb.checked);
+    _scheduleSave();
+    _fckSig = '';
+    _bkRefresh(el, b);
+    _tlRefresh();
+    _ckNudge(b);
+  }
+
   function _onGridKey(e) {
     const t = e.target;
     if (!t.classList) return;
+    if (e.key === 'Escape' && t.closest) {                            // Esc rolls an opened checklist back up
+      const oe = t.closest('.hub-tm-block.is-open'), ob = oe && _blockById(oe.getAttribute('data-block-id'));
+      if (ob) { e.preventDefault(); _bkToggle(oe, ob); const tg = oe.querySelector('.hub-tm-bk-toggle'); if (tg) tg.focus({ preventScroll: true }); return; }
+    }
     if (t.hasAttribute('data-activate') && (e.key === 'Enter' || e.key === ' ')) {
       e.preventDefault();
       _setDate(t.getAttribute('data-date'), { view: 'day' });
+      return;
+    }
+    if (t.hasAttribute && t.hasAttribute('data-bk-new')) {           // drawer input: Enter adds, Enter on empty finishes
+      if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+      e.preventDefault();
+      const el = t.closest('.hub-tm-block'), b = el && _blockById(el.getAttribute('data-block-id'));
+      if (!b) return;
+      if (t.value.trim()) _bkAddItems(el, b, [t.value]);
+      else { _bkToggle(el, b); el.focus({ preventScroll: true }); }
       return;
     }
     if (!t.classList.contains('hub-tm-block') && !t.classList.contains('hub-tm-week-block')) return;
@@ -2303,6 +2799,8 @@ const timeManagementModule = (function () {
      FOCUS MODE  (always about *today*, live-updating)
      ============================================================ */
   function _openFocus() {
+    if (!_fs) _fsSummary = null;
+    _fsSig = '';
     _renderFocus();
     _openModal(_el('#hub-tm-focus-panel'), '#tm-btn-focus-exit');
     if (_focusTimer) clearInterval(_focusTimer);
@@ -2317,21 +2815,24 @@ const timeManagementModule = (function () {
     const nxt = cur ? null : list.find(function (b) { return _toMins(b.startTime) > nm; });
     const set = function (sel, v) { const n = p.querySelector(sel); if (n) n.textContent = v; };
     const fill = p.querySelector('.hub-tm-focus-fill'), bar = p.querySelector('.hub-tm-focus-bar'), tagEl = p.querySelector('.hub-tm-focus-tag');
-    const b = cur || nxt;
-    p.classList.toggle('is-idle', !cur);
-    set('.hub-tm-focus-badge-text', cur ? 'NOW' : nxt ? 'UP NEXT' : 'FREE');
+    const sb = _fs ? _blockById(_fs.blockId) : null;               // a running session pins the panel to its own block
+    const b = sb || cur || nxt;
+    p.classList.toggle('is-idle', !cur && !sb);
+    p.classList.toggle('is-session', !!sb);
+    set('.hub-tm-focus-badge-text', sb ? (_fs.phase === 'break' ? 'BREAK' : _fs.running ? 'FOCUS' : 'PAUSED') : cur ? 'NOW' : nxt ? 'UP NEXT' : 'FREE');
     if (b) {
       const tag = _tagOrFallback(b.tagId), s = _toMins(b.startTime), e = _toMins(b.endTime);
+      const inside = nm >= s && nm < e;
       set('.hub-tm-focus-time', b.startTime + ' – ' + b.endTime);
       set('.hub-tm-focus-title', b.title || tag.label);
       set('.hub-tm-focus-note', _plainText(b.subtitle));
       _renderFocusCk(b);
       tagEl.textContent = tag.label;
       tagEl.style.setProperty('--tm-c', _safeColor(tag.color));
-      const pct = cur ? _clamp(Math.round((nm - s) / (e - s) * 100), 0, 100) : 0;
+      const pct = inside ? _clamp(Math.round((nm - s) / (e - s) * 100), 0, 100) : nm >= e ? 100 : 0;
       fill.style.width = pct + '%';
       bar.setAttribute('aria-valuenow', String(pct));
-      set('.hub-tm-focus-label', cur ? pct + '% complete · ' + _fmtDur(e - nm) + ' left' : 'Starts in ' + _fmtDur(s - nm));
+      set('.hub-tm-focus-label', inside ? pct + '% complete · ' + _fmtDur(e - nm) + ' left' : nm >= e ? 'Block time is up · ' + _fmtDur(nm - e) + ' over' : 'Starts in ' + _fmtDur(s - nm));
     } else {
       set('.hub-tm-focus-time', '');
       set('.hub-tm-focus-title', 'No active block');
@@ -2342,6 +2843,278 @@ const timeManagementModule = (function () {
       bar.setAttribute('aria-valuenow', '0');
       set('.hub-tm-focus-label', 'Nothing else scheduled today');
     }
+    _fsPaint();
+  }
+
+  /* ============================================================
+     FOCUS SESSION
+     Everything is computed from timestamps (never from counting ticks), so a throttled
+     background tab or a reload cannot make the clock drift.
+       accMs    focus time already banked      segStart  when the running stretch began
+       phaseAcc time spent in the current phase before that stretch (Pomodoro / Deep work)
+       beat     last moment we know the page was alive (used to detect sleep / a closed page)
+     ============================================================ */
+  function _fsPhaseLen(s) {                                   // ms, 0 = no phases (plain timer)
+    const m = FS_MODES[s.mode];
+    if (!m || !m.work) return 0;
+    if (s.phase === 'work') return m.work * 60000;
+    return ((m.every && s.cycles > 0 && s.cycles % m.every === 0) ? m.long : m.brk) * 60000;
+  }
+  function _fsFocusMs(s, now) { return s.accMs + (s.running && s.phase === 'work' ? Math.max(0, now - s.segStart) : 0); }
+  function _fsPhaseMs(s, now) { return s.phaseAcc + (s.running ? Math.max(0, now - s.segStart) : 0); }
+  function _fsClock(ms) {
+    const t = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), sec = t % 60;
+    return (h ? h + ':' + _pad(m) : _pad(m)) + ':' + _pad(sec);
+  }
+  function _fsKey() { return FS_KEY + ':' + (_dataUid || 'guest'); }
+  function _fsPersist() {
+    try { if (_fs) localStorage.setItem(_fsKey(), JSON.stringify(_fs)); else localStorage.removeItem(_fsKey()); } catch (_) {}
+  }
+  function _fsEnsureTimer() { if (_fs && !_fsTimer) _fsTimer = setInterval(_fsTick, 1000); }
+
+  /** Move through any phase boundaries that passed (also when the tab was in the background). */
+  function _fsAdvance(now) {
+    const s = _fs;
+    if (!s || !s.running) return false;
+    let moved = false, guard = 0;
+    while (s.running && guard++ < 100) {
+      const L = _fsPhaseLen(s);
+      if (!L) break;
+      const pm = s.phaseAcc + (now - s.segStart);
+      if (pm < L) break;
+      const endAt = now - (pm - L);                         // the exact moment the phase ended
+      if (s.phase === 'work') { s.accMs += Math.max(0, endAt - s.segStart); s.cycles++; s.phase = 'break'; }
+      else s.phase = 'work';
+      s.phaseAcc = 0; s.segStart = endAt; moved = true;
+    }
+    return moved;
+  }
+  function _fsBank(now) {                                   // stop the running stretch and bank it
+    const s = _fs;
+    if (!s || !s.running) return;
+    const seg = Math.max(0, now - s.segStart);
+    if (s.phase === 'work') s.accMs += seg;
+    s.phaseAcc += seg;
+    s.running = false;
+  }
+  function _fsCue(type) {
+    try { if (navigator.vibrate) navigator.vibrate(type === 'end' ? [160, 80, 160] : 120); } catch (_) {}
+    try {
+      const b = _fs && _blockById(_fs.blockId);
+      if (_audio.enabled && _armed() && _ctx) _playCue({ type: type, tagId: b ? b.tagId : null }, _ctx.currentTime + 0.05);
+    } catch (_) {}
+  }
+
+  function _fsStart(blockId, mode) {
+    const b = _blockById(blockId);
+    if (!b) return false;
+    const now = Date.now();
+    if (!FS_MODES[mode]) mode = 'block';
+    _fs = { id: 'fs-' + now, blockId: blockId, mode: mode, running: true, phase: 'work', segStart: now, phaseAcc: 0, accMs: 0, cycles: 0, startedAt: now, beat: now };
+    _fsSummary = null; _fsMiss = 0;
+    _fsPersist(); _fsEnsureTimer(); _renderFocus();
+    return true;
+  }
+  function _fsPause() {
+    if (!_fs || !_fs.running) return;
+    const now = Date.now();
+    _fsAdvance(now); _fsBank(now);
+    _fsPersist(); _renderFocus();
+  }
+  function _fsResume() {
+    if (!_fs || _fs.running) return;
+    _fs.running = true; _fs.segStart = _fs.beat = Date.now();
+    _fsPersist(); _renderFocus();
+  }
+  function _fsSkipBreak() {
+    if (!_fs || _fs.phase !== 'break') return;
+    const now = Date.now();
+    if (_fs.running) _fsAdvance(now);
+    if (_fs.phase !== 'break') return;
+    _fs.phase = 'work'; _fs.phaseAcc = 0; _fs.segStart = now;
+    _fsPersist(); _renderFocus();
+  }
+  function _fsStop() {
+    const s = _fs;
+    if (!s) return;
+    const now = Date.now();
+    _fsAdvance(now); _fsBank(now);
+    const ms = Math.round(s.accMs), b = _blockById(s.blockId);
+    _fs = null; _fsPersist();
+    if (b && ms >= FS_MIN_MS) {
+      b.focusMs = _clamp((b.focusMs || 0) + ms, 0, 86400000);
+      _scheduleSave();
+      _fsSummary = { blockId: b.id, ms: ms };
+      if (_sectionEl && _sectionEl.isConnected) { _renderGrid({ animate: false, scroll: false }); _updateSummary(); }
+    } else {
+      _fsSummary = null;
+      if (!b) _toast('That block no longer exists — the session was not saved.');
+    }
+    _fsSig = '';
+    _renderFocus();
+  }
+  /** After a reload: pick the session up again, paused if the page was closed for a while. */
+  function _fsRestore() {
+    _fs = null;
+    const r = _lsJson(_fsKey());
+    if (r && typeof r === 'object' && _blockById(r.blockId) && FS_MODES[r.mode] && isFinite(r.segStart)) {
+      _fs = {
+        id: String(r.id || ''), blockId: String(r.blockId), mode: r.mode, running: !!r.running, phase: r.phase === 'break' ? 'break' : 'work',
+        segStart: +r.segStart, phaseAcc: +r.phaseAcc || 0, accMs: +r.accMs || 0, cycles: +r.cycles || 0, startedAt: +r.startedAt || +r.segStart, beat: +r.beat || +r.segStart
+      };
+      const now = Date.now();
+      if (_fs.running && now - _fs.beat > FS_AWAY_LOAD) {
+        _fsAdvance(_fs.beat); _fsBank(_fs.beat);
+        _toast('Focus session paused — the page was closed for a while.');
+      } else if (_fs.running) _fsAdvance(now);
+      _fsPersist(); _fsEnsureTimer();
+    }
+    _fsSig = '';
+  }
+  function _fsBeat() { if (_fs && _fs.running) { _fs.beat = Date.now(); _fsPersist(); } }
+
+  function _fsTick() {
+    const s = _fs;
+    if (!s) { if (_fsTimer) { clearInterval(_fsTimer); _fsTimer = null; } _fsPaint(); return; }
+    const now = Date.now();
+    if (!_blockById(s.blockId)) {                                 // deleted (here or on another device); give Undo a moment
+      if (!_fsMiss) _fsMiss = now;
+      else if (now - _fsMiss > 15000) { _fs = null; _fsMiss = 0; _fsPersist(); _fsSig = ''; _toast('Focus session ended — its block was deleted.'); }
+    } else _fsMiss = 0;
+    if (_fs && _fs.running) {
+      if (now - (_fs.beat || _fs.segStart) > FS_AWAY_TICK) {      // the computer slept: do not count the time away
+        const t = _fs.beat || _fs.segStart;
+        _fsAdvance(t); _fsBank(t);
+        _fsPersist(); _fsSig = '';
+        _toast('Focus session paused — you were away.');
+      } else {
+        const was = _fs.phase;
+        if (_fsAdvance(now)) {
+          _fsCue(_fs.phase === 'break' ? 'end' : 'start');
+          _toast(_fs.phase === 'break' ? 'Focus round done — take a break.' : 'Break over — back to focus.');
+          _fsPersist();
+        }
+        if (now - (_fs.beat || 0) >= 15000) { _fs.beat = now; _fsPersist(); }
+        if (was !== _fs.phase) _renderFocus();
+      }
+    }
+    _fsPaint();
+  }
+
+  /* What should the big button do right now? */
+  function _fsSuggest() {
+    const d = new Date(), nm = d.getHours() * 60 + d.getMinutes();
+    const list = _blocksForDate(_todayStr());
+    const cur = list.find(function (b) { return nm >= _toMins(b.startTime) && nm < _toMins(b.endTime); });
+    if (cur) return { kind: 'now', b: cur };
+    const nxt = list.find(function (b) { return _toMins(b.startTime) > nm; });
+    if (nxt && _toMins(nxt.startTime) - nm <= FS_EARLY_MIN) return { kind: 'early', b: nxt, mins: _toMins(nxt.startTime) - nm };
+    return { kind: 'quick', b: null, next: nxt || null, nm: nm };
+  }
+  /** Quick focus: make a block that starts now, never overlapping the next one. */
+  function _fsQuickStart(mins, mode) {
+    const d = new Date(), date = _todayStr(), s = d.getHours() * 60 + d.getMinutes();
+    const free = _freeBounds(date, s);
+    const e = Math.min(DAY_MINS, s + mins, free[1]);
+    if (free[1] <= s || e - s < 5) {
+      const nx = _blocksForDate(date).find(function (b) { return _toMins(b.startTime) > s; });
+      _toast(nx ? 'Less than 5 min free before “' + (nx.title || _tagOrFallback(nx.tagId).label) + '”.' : 'No time left today.');
+      return null;
+    }
+    const tag = _tagOrFallback(_activeTagId);
+    const b = _normBlock({ id: _newId(), date: date, tagId: tag.id === FALLBACK_TAG.id ? 'work' : tag.id, startTime: _toTime(s), endTime: _toTime(e), title: 'Quick focus', subtitle: '', createdAt: Date.now() });
+    if (!b) return null;
+    _timeBlocks.push(b);
+    _scheduleSave();
+    if (_sectionEl && _sectionEl.isConnected) { _renderGrid({ animate: false, scroll: false }); _updateSummary(); }
+    _fsStart(b.id, mode);
+    if (e - s < mins) _toast('Shortened to ' + (e - s) + ' min — the next block starts then.');
+    return b;
+  }
+
+  function _fsSub(s, now) {
+    const b = _blockById(s.blockId);
+    if (!s.running) return 'Paused · ' + _fsClock(_fsFocusMs(s, now)) + ' focused';
+    if (s.phase === 'break') return 'Break · step away from the screen';
+    if (s.mode === 'block') {
+      const d = new Date(), nm = d.getHours() * 60 + d.getMinutes(), e = b ? _toMins(b.endTime) : 0;
+      return b && nm >= e ? 'Over the block by ' + _fmtDur(nm - e) : 'Block ends at ' + (b ? b.endTime : '');
+    }
+    return 'Round ' + (s.cycles + 1) + ' · ' + _fsClock(_fsFocusMs(s, now)) + ' focused';
+  }
+  function _fsBtn(now) {                                         // the toolbar button shows the live clock
+    const btn = _el('#tm-btn-focus-mode');
+    if (!btn) return;
+    const s = _fs, lab = btn.querySelector('.hub-tm-btn-label');
+    btn.classList.toggle('is-live', !!s);
+    btn.classList.toggle('is-paused', !!s && !s.running);
+    if (!s) { if (lab) lab.textContent = 'Focus'; btn.title = 'Focus Mode'; return; }
+    const L = _fsPhaseLen(s), txt = (s.phase === 'break' ? 'Break' : s.running ? 'Focus' : 'Paused') + ' · ' + _fsClock(L ? L - _fsPhaseMs(s, now) : _fsFocusMs(s, now));
+    if (lab) lab.textContent = txt;
+    btn.title = txt;
+  }
+  function _fsPaint() {
+    const now = Date.now(), s = _fs;
+    _fsBtn(now);
+    const box = _el('#hub-tm-fs');
+    if (!box) return;
+    const clock = _el('#hub-tm-fs-clock'), tEl = _el('#hub-tm-fs-time'), sub = _el('#hub-tm-fs-sub');
+    clock.classList.toggle('hub-tm-hidden', !s);
+    box.classList.toggle('is-break', !!s && s.phase === 'break');
+    let sig, modesHtml = '', quickHtml = '', actHtml = '', note = '';
+    const btn = function (act, label, cls, v) { return '<button type="button" class="hub-tm-btn ' + (cls || 'hub-tm-btn--outline') + '" data-fs="' + act + '"' + (v !== undefined ? ' data-v="' + v + '"' : '') + '>' + label + '</button>'; };
+    if (s) {
+      const L = _fsPhaseLen(s);
+      tEl.textContent = _fsClock(L ? L - _fsPhaseMs(s, now) : _fsFocusMs(s, now));
+      sub.textContent = _fsSub(s, now);
+      sig = 'run|' + s.running + '|' + s.phase + '|' + s.mode;
+      actHtml = (s.running ? btn('pause', 'Pause') : btn('resume', 'Resume', 'hub-tm-btn--primary')) + (s.phase === 'break' ? btn('skip', 'Skip break') : '') + btn('stop', 'Stop &amp; save', 'hub-tm-btn--danger');
+    } else if (_fsSummary) {
+      const b = _blockById(_fsSummary.blockId);
+      sig = 'sum|' + _fsSummary.blockId + '|' + _fsSummary.ms + '|' + (b && b.done);
+      note = 'Focused ' + _fmtDur(Math.max(1, Math.round(_fsSummary.ms / 60000))) + (b ? ' on “' + _esc(b.title || _tagOrFallback(b.tagId).label) + '” · ' + _fmtDur(Math.round((b.focusMs || 0) / 60000)) + ' in total' : '');
+      actHtml = (b && !b.done ? btn('sum-done', 'Mark block done', 'hub-tm-btn--primary') : '') + btn('sum-close', 'Another session');
+    } else {
+      const sg = _fsSuggest();
+      sig = 'idle|' + sg.kind + '|' + (sg.b ? sg.b.id : '') + '|' + (sg.mins || '') + '|' + _fsMode + '|' + _fsQuick + '|' + (sg.next ? sg.next.id : '');
+      modesHtml = Object.keys(FS_MODES).map(function (k) {
+        return '<button type="button" class="hub-tm-fs-chip' + (k === _fsMode ? ' is-on' : '') + '" data-fs="mode" data-v="' + k + '" aria-pressed="' + (k === _fsMode) + '">' + FS_MODES[k].label + '</button>';
+      }).join('');
+      note = FS_MODES[_fsMode].hint;
+      if (sg.kind === 'quick') {
+        quickHtml = FS_QUICK.map(function (m) { return '<button type="button" class="hub-tm-fs-chip' + (m === _fsQuick ? ' is-on' : '') + '" data-fs="len" data-v="' + m + '" aria-pressed="' + (m === _fsQuick) + '">' + m + ' min</button>'; }).join('');
+        const room = sg.next ? _toMins(sg.next.startTime) - sg.nm : 0;
+        note += ' · ' + (sg.next ? 'Free for ' + _fmtDur(room) + ' before “' + _esc(sg.next.title || _tagOrFallback(sg.next.tagId).label) + '”' : 'Creates a block starting now');
+        actHtml = btn('start-quick', 'Quick focus · ' + _fsQuick + ' min', 'hub-tm-btn--primary');
+      } else {
+        actHtml = btn('start', sg.kind === 'early' ? 'Start early · in ' + _fmtDur(sg.mins) : 'Start focus', 'hub-tm-btn--primary');
+      }
+    }
+    if (sig !== _fsSig) {                                        // rebuild controls only when something changed
+      _fsSig = sig;
+      _el('#hub-tm-fs-modes').innerHTML = modesHtml;
+      _el('#hub-tm-fs-quick').innerHTML = quickHtml;
+      _el('#hub-tm-fs-actions').innerHTML = actHtml;
+      _el('#hub-tm-fs-note').innerHTML = note;
+      _el('#hub-tm-fs-modes').classList.toggle('hub-tm-hidden', !modesHtml);
+      _el('#hub-tm-fs-quick').classList.toggle('hub-tm-hidden', !quickHtml);
+      _el('#hub-tm-fs-note').classList.toggle('hub-tm-hidden', !note);
+    }
+  }
+  function _fsClick(e) {
+    const t = e.target.closest('[data-fs]');
+    if (!t) return;
+    const act = t.getAttribute('data-fs'), v = t.getAttribute('data-v');
+    if (act === 'mode') { _fsMode = FS_MODES[v] ? v : 'block'; _lsSet(FS_MODE_KEY, _fsMode); _fsSig = ''; _fsPaint(); }
+    else if (act === 'len') { _fsQuick = parseInt(v, 10) || 25; _fsSig = ''; _fsPaint(); }
+    else if (act === 'start') { const sg = _fsSuggest(); if (sg.b) _fsStart(sg.b.id, _fsMode); }
+    else if (act === 'start-quick') _fsQuickStart(_fsQuick, _fsMode);
+    else if (act === 'pause') _fsPause();
+    else if (act === 'resume') _fsResume();
+    else if (act === 'skip') _fsSkipBreak();
+    else if (act === 'stop') _fsStop();
+    else if (act === 'sum-done') { if (_fsSummary) _habToggleDone(_fsSummary.blockId); _fsSig = ''; _renderFocus(); }
+    else if (act === 'sum-close') { _fsSummary = null; _fsSig = ''; _fsPaint(); }
   }
 
   /* ============================================================
@@ -4219,6 +4992,7 @@ const timeManagementModule = (function () {
         else throw e;
       }
       c.sdId = String(t.id || t._id); c.sdFp = made ? _sdFp() : ''; _habSave();
+      if (!c.sdOn) { _habQueueDel(c.sdId); c.sdId = ''; c.sdFp = ''; _habSave(); _hab.again = true; return out; }   // switched off while it was being created
       if (made) out.msg = 'Streak Daily created';
     }
     if (c.sdFp !== _sdFp()) { await _habReq('PUT', '/tasks/' + encodeURIComponent(c.sdId), _sdBody(false)); c.sdFp = _sdFp(); _habSave(); }
@@ -4246,7 +5020,7 @@ const timeManagementModule = (function () {
       return;
     }
     _confirm('This deletes the Daily from Habitica, so its streak there is lost. Your planner streak is not affected.', function () {
-      if (c.sdId) _habQueueDel(c.sdId);
+      _habQueueDel(c.sdId || SD_ALIAS);                                        // no saved id (other browser / cleared storage)? Habitica also accepts the alias
       c.sdOn = false; c.sdId = ''; c.sdUp = ''; c.sdFp = '';
       _hab.sd = { streak: null, completed: null, note: '', at: 0 };
       _habSave(); _habAfterCfg();
@@ -4350,7 +5124,8 @@ const timeManagementModule = (function () {
     _hab.force = false;
     let changed = false, gold = 0, scored = 0, created = 0, updated = 0, removed = 0, sdMsg = '';
     try {
-      if (pull || !_hab.user || Date.now() - _hab.lastPull > 120000) { if (await _habPull()) changed = true; }
+      try { if (pull || !_hab.user || Date.now() - _hab.lastPull > 120000) { if (await _habPull()) changed = true; } }
+      catch (e) { if (e.status === 401) throw e; }                          // a failed pull must not stop owed deletions below
       _habDiff();
       while (_hab.delQ.length) {
         const id = _hab.delQ[0];
@@ -4409,7 +5184,7 @@ const timeManagementModule = (function () {
     if (_habHubOpen()) _habRenderHub();
     if (_hab.err) _toast('Habitica: ' + _hab.err);
     else if (scored) _toast((gold >= 0 ? '+' : '') + gold.toFixed(1) + ' gold');
-    if (_hab.again) { _hab.again = false; _habQueueSync(); }
+    if (_hab.again) { _hab.again = false; if (_hab.delQ.length) _habReconcile(false); else _habQueueSync(); }   // manual mode: owed deletions still go out
   }
 
   /* ── Completing a block ── */
