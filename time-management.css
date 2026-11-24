@@ -5409,6 +5409,25 @@ body.theme-optimized #time-management .hub-tm-ibx-prisel { border-radius: 0; }
 .hub-tm-rm-steps li::before { content: counter(rmstep); position: absolute; left: 0; top: 0; display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--tm-accent-line); border-radius: 50%; font: 700 0.64rem/1 var(--tm-font-num); color: var(--accent-primary); }
 .hub-tm-rm-steps b { color: var(--text-primary); }
 .hub-tm-rm-ai-extra { width: 100%; resize: vertical; min-height: 64px; font: 500 0.78rem/1.45 var(--tm-font-ui); }
+.hub-tm-rm-ai-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.hub-tm-rm-aitag {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px;
+  border: 1px solid var(--tm-line-strong); border-radius: 999px; background: transparent;
+  color: var(--text-secondary); font: 600 0.72rem/1 var(--tm-font-ui); cursor: pointer;
+  transition: border-color 0.12s ease, background-color 0.12s ease, color 0.12s ease;
+}
+.hub-tm-rm-aitag:hover { border-color: color-mix(in srgb, var(--tm-c, var(--accent-primary)) 70%, var(--tm-line-strong)); color: var(--text-primary); }
+.hub-tm-rm-aitag[aria-pressed="true"] {
+  border-color: var(--tm-c, var(--accent-primary));
+  background: color-mix(in srgb, var(--tm-c, var(--accent-primary)) 18%, var(--bg-surface));
+  color: var(--text-primary);
+}
+.hub-tm-rm-aitag--custom { --tm-c: var(--accent-primary); padding-right: 8px; }
+.hub-tm-rm-aitag-x { font-size: 0.92rem; line-height: 1; opacity: 0.75; }
+.hub-tm-rm-aitag--custom:hover .hub-tm-rm-aitag-x { color: var(--danger); opacity: 1; }
+.hub-tm-rm-ai-tagadd { display: flex; align-items: center; gap: 6px; }
+.hub-tm-rm-ai-tagadd .hub-tm-input { flex: 1; min-width: 0; }
+#hub-tm-roadmap-modal .hub-tm-rm-ai-tagbtn { flex: none; min-height: 30px; height: 30px; padding: 0 12px; font-size: 0.74rem; }
 .hub-tm-rm-trio { display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: 10px; }
 .hub-tm-rm-det { border: 1px solid var(--tm-line); border-radius: var(--tm-r-sm); padding: 0 12px; }
 .hub-tm-rm-det > summary { padding: 9px 0; cursor: pointer; font: 600 0.74rem/1 var(--tm-font-ui); color: var(--text-secondary); }
@@ -5438,6 +5457,8 @@ body.theme-optimized #time-management .hub-tm-ibx-prisel { border-radius: 0; }
 #hub-tm-roadmap-modal .hub-tm-btn:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
 
 body.theme-optimized .hub-tm-rm-snip button,
+body.theme-optimized .hub-tm-rm-aitag,
+body.theme-optimized .hub-tm-rm-ai-tagbtn,
 body.theme-optimized .hub-tm-rm-steps li::before { border-radius: 0; }
 
 @media (max-width: 820px) {
@@ -5540,8 +5561,8 @@ body.theme-optimized .hub-tm-rm-steps li::before { border-radius: 0; }
 
 /* Toolbar button: the roadmap glyph follows the theme too */
 #time-management #tm-btn-roadmap[data-skin] svg { display: none; }
-#time-management #tm-btn-roadmap[data-skin]::after { content: ""; order: -1; flex: none; width: 16px; height: 16px; background: currentColor; -webkit-mask: var(--rm-brand) center / contain no-repeat; mask: var(--rm-brand) center / contain no-repeat; }
-#time-management #tm-btn-roadmap[data-skin="tui"]::after { width: auto; height: auto; background: none; -webkit-mask: none; mask: none; content: "▶"; font: 700 0.8em/1 var(--tm-font-num); }
+#time-management #tm-btn-roadmap[data-skin]::before { content: ""; flex: none; width: 16px; height: 16px; background: currentColor; -webkit-mask: var(--rm-brand) center / contain no-repeat; mask: var(--rm-brand) center / contain no-repeat; }
+#time-management #tm-btn-roadmap[data-skin="tui"]::before { width: auto; height: auto; background: none; -webkit-mask: none; mask: none; content: "▶"; font: 700 0.8em/1 var(--tm-font-num); }
 
 @keyframes tm-rm-blink { 50% { opacity: 0.15; } }
 @keyframes tm-rm-bob   { 50% { translate: 0 -2px; } }
@@ -6101,3 +6122,56 @@ body.theme-optimized .hub-tm-rm-steps li::before { border-radius: 0; }
 #time-management #hub-tm-rmlib-modal[data-skin="tui"] .hub-tm-rml-acts .hub-tm-btn { border-radius: 0; }
 #time-management .hub-tm-rm[data-skin="tui"] .hub-tm-rm-pick { font-family: var(--tm-font-num); letter-spacing: 0.04em; text-transform: uppercase; }
 #time-management .hub-tm-rm[data-skin="tui"] .hub-tm-rm-pick, #time-management .hub-tm-rm[data-skin="tui"] .hub-tm-rm-pick:hover { border-bottom-style: solid; }
+
+/* ==========================================================================
+   ADMIN READ-ONLY MODE  (body.wallet-readonly)
+   Allows admins to view all Time Management tabs, blocks, inbox, timeline
+   and roadmaps without editing, dragging, toggling or writing back.
+   ========================================================================== */
+body.wallet-readonly #time-management .hub-tm-qp,
+body.wallet-readonly #time-management .hub-tm-tag-add,
+body.wallet-readonly #time-management .hub-tm-tag-delete,
+body.wallet-readonly #time-management .hub-tm-block-grip,
+body.wallet-readonly #time-management .hub-tm-block-delete,
+body.wallet-readonly #time-management .hub-tm-block-check,
+body.wallet-readonly #time-management .hub-tm-bk-add,
+body.wallet-readonly #time-management .hub-tm-bk-foot,
+body.wallet-readonly #time-management .hub-tm-ibx-add,
+body.wallet-readonly #time-management .hub-tm-ibx-hint,
+body.wallet-readonly #time-management .hub-tm-ibx-more,
+body.wallet-readonly #time-management .hub-tm-ibx-go,
+body.wallet-readonly #time-management .hub-tm-tl-acts,
+body.wallet-readonly #time-management .hub-tm-tl-ckedit,
+body.wallet-readonly #time-management [data-rm-edit],
+body.wallet-readonly #time-management [data-rm-archive],
+body.wallet-readonly #time-management [data-rm-catchup],
+body.wallet-readonly #time-management [data-rm-act="plan"],
+body.wallet-readonly #time-management [data-rm-act="today"],
+body.wallet-readonly #time-management [data-rm-act="push"],
+body.wallet-readonly #time-management #hub-tm-rmlib-modal [data-rml-act="new"],
+body.wallet-readonly #time-management #hub-tm-rmlib-modal [data-rml-act="edit"],
+body.wallet-readonly #time-management #hub-tm-rmlib-modal [data-rml-act="archive"],
+body.wallet-readonly #time-management #hub-tm-rmlib-modal [data-rml-act="restore"],
+body.wallet-readonly #time-management #hub-tm-rmlib-modal [data-rml-act="delete"],
+body.wallet-readonly #time-management #hub-tm-rmlib-modal [data-rml-act="rerun"],
+body.wallet-readonly #time-management #hub-tm-rmlib-modal [data-rml-act="use"],
+body.wallet-readonly #time-management #hub-tm-rmlib-modal [data-rml-act="tpl-del"],
+body.wallet-readonly #time-management #hub-tm-rmlib-modal [data-rml-act="save-tpl"] {
+  display: none !important;
+}
+
+body.wallet-readonly #time-management .hub-tm-block,
+body.wallet-readonly #time-management .hub-tm-week-block,
+body.wallet-readonly #time-management .hub-tm-ibx-item,
+body.wallet-readonly #time-management .hub-tm-bk-row label,
+body.wallet-readonly #time-management .hub-tm-rm-ckrow,
+body.wallet-readonly #time-management .hub-tm-tl-ckrow {
+  cursor: default;
+}
+
+@media (hover: hover) {
+  body.wallet-readonly #time-management .hub-tm-slot:hover {
+    background: transparent;
+    cursor: default;
+  }
+}

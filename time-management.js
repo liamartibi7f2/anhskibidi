@@ -440,8 +440,8 @@ const timeManagementModule = (function () {
     if (Array.isArray(data.inbox)) { _inbox = data.inbox.map(_normInbox).filter(Boolean); _ibxSort(); }
     _settingsAt  = Number(data.settingsAt) || 0;
     if (Array.isArray(data.templates)) _templates = data.templates.map(_normTpl).filter(Boolean);
-    else _seedLegacyTemplates();
-    _applyAudio(data.audio && typeof data.audio === 'object' ? data.audio : _lsJson(AUDIO_KEY));
+    else if (!_isReadOnly()) _seedLegacyTemplates();
+    _applyAudio(data.audio && typeof data.audio === 'object' ? data.audio : (_isReadOnly() ? {} : _lsJson(AUDIO_KEY)));
   }
   function _resetData() {
     _cancelDrag();
@@ -496,8 +496,14 @@ const timeManagementModule = (function () {
       audio: audio, activeTagId: _activeTagId, settingsAt: _settingsAt, milestones: _msMap, tombs: _tombs, updatedAt: now
     };
   }
+  function _isReadOnly() {
+    return !!(typeof document !== 'undefined' && document.body && document.body.classList.contains('wallet-readonly'))
+        || !!(typeof window !== 'undefined' && window.WalletAdmin && window.WalletAdmin.isViewMode);
+  }
+  function _roBlock() { _toast('Chế độ xem: chỉ đọc, không thể chỉnh sửa'); }
   function _saveAll() {
     _saveTimer = null;
+    if (_isReadOnly()) return;
     if (_dataUid === undefined) return;                  // nothing loaded yet — never write an empty shell over real data
     const p = _payload();
     _ibxSaveLs();
@@ -509,12 +515,13 @@ const timeManagementModule = (function () {
     }
   }
   function _scheduleSave() {
+    if (_isReadOnly()) return;
     _habQueueSync();
     if (_audio.enabled) _resetSchedule();
     if (_saveTimer) clearTimeout(_saveTimer);
     _saveTimer = setTimeout(_saveAll, 250);
   }
-  function _flushSave() { if (_saveTimer) { clearTimeout(_saveTimer); _saveAll(); } }
+  function _flushSave() { if (_isReadOnly()) return; if (_saveTimer) { clearTimeout(_saveTimer); _saveAll(); } }
 
   function _loadData() {
     const seq = ++_loadSeq;
@@ -547,6 +554,10 @@ const timeManagementModule = (function () {
     _afterDataReady(st);
   }
   function _afterDataReady(st) {
+    if (_isReadOnly()) {
+      if (_sectionEl && _sectionEl.isConnected) _paint(true);
+      return;
+    }
     _fsRestore();                          // this account's running focus session, if any
     _habSeedKnown();                       // this account's To-Do ids count as already synced — Habitica must never read another account's blocks as "deleted"
     _habQueueSync(800);
@@ -570,6 +581,13 @@ const timeManagementModule = (function () {
   }
   function _onRemote(uid, remote) {
     if (!_dataReady || uid !== _dataUid) return;
+    if (_isReadOnly()) {
+      _resetData();
+      if (remote) { _applyData(remote); _ibxLoad(remote); _loadMs(remote); }
+      _rebase();
+      if (_sectionEl && _sectionEl.isConnected) _paint(false);
+      return;
+    }
     if (_drag || _editingId || _ibx) {                          // never pull the rug from under a drag / open editor
       if (_remoteT) clearTimeout(_remoteT);
       _remoteT = setTimeout(function () { _remoteT = null; _onRemote(uid, remote); }, 1200);
@@ -1118,6 +1136,14 @@ const timeManagementModule = (function () {
                   '<p class="hub-tm-rm-lead">Let any AI draft the plan, then paste its answer into the Edit tab.</p>' +
                   '<ol class="hub-tm-rm-steps"><li><b>Describe</b> what you need below.</li><li><b>Copy</b> the prompt into ChatGPT, Claude or Gemini and add your syllabus at the end.</li><li><b>Paste</b> the answer into the Edit tab. Phases, times and tasks are recognised for you.</li></ol>' +
                   '<div class="hub-tm-field"><label for="tm-rm-ai-topic">Subject</label><input type="text" class="hub-tm-input" id="tm-rm-ai-topic" maxlength="120" placeholder="e.g. Civil Law: contracts, or Daily English dictation" autocomplete="off"></div>' +
+                  '<div class="hub-tm-field">' +
+                    '<label for="tm-rm-ai-tag-input">Tags <em class="hub-tm-sb-opt">optional · existing or custom</em></label>' +
+                    '<div class="hub-tm-rm-ai-tags" id="tm-rm-ai-tags" role="group" aria-label="Prompt tags"></div>' +
+                    '<div class="hub-tm-rm-ai-tagadd">' +
+                      '<input type="text" class="hub-tm-input hub-tm-input--sm" id="tm-rm-ai-tag-input" maxlength="40" placeholder="Add custom tag (e.g. Exam prep, Listening)..." autocomplete="off">' +
+                      '<button type="button" class="hub-tm-btn hub-tm-btn--outline hub-tm-rm-ai-tagbtn" id="tm-rm-ai-tag-add">+ Add</button>' +
+                    '</div>' +
+                  '</div>' +
                   '<div class="hub-tm-field"><label for="tm-rm-ai-extra">Extra requirements <em class="hub-tm-sb-opt">optional</em></label><textarea class="hub-tm-input hub-tm-rm-ai-extra" id="tm-rm-ai-extra" rows="3" maxlength="600" placeholder="e.g. 15 min a day in phases 1-2 and 30 min in phases 3-4; Sundays at 11:30"></textarea></div>' +
                   '<div class="hub-tm-rm-trio">' +
                     '<div class="hub-tm-field"><label for="tm-rm-ai-days">Days</label><input type="number" class="hub-tm-input" id="tm-rm-ai-days" min="1" max="365" value="30"></div>' +
@@ -1982,9 +2008,10 @@ const timeManagementModule = (function () {
   }
   function _msKeyLs() { return MS_KEY + ':' + (_dataUid || 'guest'); }
   /** Union of the account's synced map and this device's mirror, so a celebration is never repeated on another device. */
-  function _loadMs(payload) { _msMap = Object.assign({}, _normMs(_lsJson(MS_KEY)), _normMs(_lsJson(_msKeyLs())), _normMs(payload && payload.milestones)); }
+  function _loadMs(payload) { _msMap = _isReadOnly() ? _normMs(payload && payload.milestones) : Object.assign({}, _normMs(_lsJson(MS_KEY)), _normMs(_lsJson(_msKeyLs())), _normMs(payload && payload.milestones)); }
   /** Fires once per (streak run, milestone), on the day the streak reaches exactly that length. */
   function _msCheck(sk) {
+    if (_isReadOnly()) return;
     if (!sk.start || sk.state[sk.today] !== 'hit') return;
     const t = MS_TIERS.filter(function (x) { return x.n === sk.cur; })[0];
     if (!t) return;
@@ -2160,12 +2187,13 @@ const timeManagementModule = (function () {
   }
   function _onTagClick(e) {
     const del = e.target.closest('[data-del-tag]');
-    if (del) { _deleteTag(del.getAttribute('data-del-tag')); return; }
+    if (del) { if (_isReadOnly()) { _roBlock(); return; } _deleteTag(del.getAttribute('data-del-tag')); return; }
     const t = e.target.closest('.hub-tm-tag');
-    if (t) _setActiveTag(t.getAttribute('data-tag-id'));
+    if (t) { if (_isReadOnly()) { _roBlock(); return; } _setActiveTag(t.getAttribute('data-tag-id')); }
   }
   function _onAddTag(e) {
     e.preventDefault();
+    if (_isReadOnly()) { _roBlock(); return; }
     const form = e.currentTarget;
     const name = form.querySelector('#hub-tm-add-tag-name').value.trim();
     if (!name) { form.querySelector('#hub-tm-add-tag-name').focus(); return; }
@@ -2274,6 +2302,7 @@ const timeManagementModule = (function () {
   }
 
   function _onPointerDown(e) {
+    if (_isReadOnly()) return;
     if (_view === 'week') { _wkDown(e); return; }
     if (_view !== 'day' || _drag) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -2814,6 +2843,7 @@ const timeManagementModule = (function () {
   }
   function _ibxLoad(payload) {
     const mine = payload && Array.isArray(payload.inbox) ? payload.inbox.map(_normInbox).filter(Boolean) : [];
+    if (_isReadOnly()) { _inbox = mine; _tombs.inbox = {}; return; }
     const m = _ibxMerge(mine, payload && payload.tombs && payload.tombs.inbox, _lsJson(_ibxLsKey()));
     _inbox = m.list;
     _tombs.inbox = m.tomb;
@@ -3075,6 +3105,7 @@ const timeManagementModule = (function () {
 
   /* ── drag: Inbox → grid ── */
   function _ibxDown(e) {
+    if (_isReadOnly()) return;
     if (_ibx || _drag) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const li = e.target.closest('.hub-tm-ibx-item');
@@ -3235,6 +3266,7 @@ const timeManagementModule = (function () {
     if (n) n.classList.add('is-sel');
   }
   function _ibxClick(e) {
+    if (_isReadOnly()) { _roBlock(); return; }
     if (performance.now() < _ibxSuppress) return;
     const li = e.target.closest('.hub-tm-ibx-item');
     if (!li) return;
@@ -3920,6 +3952,7 @@ const timeManagementModule = (function () {
 
   /* ── Submit ── */
   function _qpSubmit(opts) {
+    if (_isReadOnly()) { _roBlock(); return; }
     const inp = _el('#tm-qp-input');
     if (!inp) return;
     opts = opts || {};
@@ -4040,24 +4073,38 @@ const timeManagementModule = (function () {
     const pn = e.target.closest('.hub-tm-bk-panel');
     if (pn) {
       const pe = pn.closest('.hub-tm-block'), pid = pe && pe.getAttribute('data-block-id');
-      if (e.target.closest('[data-bk-edit]')) _openDetails(pid);
-      else if (e.target.closest('[data-bk-complete]')) _habToggleDone(pid);
+      if (e.target.closest('[data-bk-edit]')) { if (_isReadOnly()) _roBlock(); else _openDetails(pid); }
+      else if (e.target.closest('[data-bk-complete]')) { if (_isReadOnly()) _roBlock(); else _habToggleDone(pid); }
       return;                                                         // ticking / reading never opens the editor
     }
     const chk = e.target.closest('.hub-tm-block-check');
     if (chk) {
+      if (_isReadOnly()) { _roBlock(); return; }
       const ce = chk.closest('.hub-tm-block');
       if (ce) _habToggleDone(ce.getAttribute('data-block-id'));
       return;
     }
     const del = e.target.closest('.hub-tm-block-delete');
     if (del) {
+      if (_isReadOnly()) { _roBlock(); return; }
       const el = del.closest('.hub-tm-block');
       if (el) _quickDelete(el.getAttribute('data-block-id'));
       return;
     }
     const bEl = e.target.closest('.hub-tm-block, .hub-tm-week-block');
-    if (bEl) { _openDetails(bEl.getAttribute('data-block-id')); return; }
+    if (bEl) {
+      const bid = bEl.getAttribute('data-block-id');
+      if (_isReadOnly()) {
+        if (bEl.classList.contains('hub-tm-block') && bEl.querySelector('.hub-tm-bk-toggle')) {
+          const tb = _blockById(bid);
+          if (tb) _bkToggle(bEl, tb);
+        } else {
+          _roBlock();
+        }
+        return;
+      }
+      _openDetails(bid); return;
+    }
     const goEl = e.target.closest('[data-activate]');
     if (goEl) { _setDate(goEl.getAttribute('data-date'), { view: 'day' }); return; }
     const col = e.target.closest('.hub-tm-week-day');
@@ -4071,6 +4118,7 @@ const timeManagementModule = (function () {
   function _onGridChange(e) {
     const cb = e.target.closest && e.target.closest('[data-bk-ck]');
     if (!cb) return;
+    if (_isReadOnly()) { cb.checked = !cb.checked; _roBlock(); return; }
     const el = cb.closest('.hub-tm-block'), b = el && _blockById(el.getAttribute('data-block-id'));
     const it = b && _ck(b).find(function (i) { return i.id === cb.getAttribute('data-bk-ck'); });
     if (!it) return;
@@ -4095,6 +4143,7 @@ const timeManagementModule = (function () {
       _setDate(t.getAttribute('data-date'), { view: 'day' });
       return;
     }
+    if (_isReadOnly()) return;
     if (t.hasAttribute && t.hasAttribute('data-bk-new')) {           // drawer input: Enter adds, Enter on empty finishes
       if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
       e.preventDefault();
@@ -4224,6 +4273,7 @@ const timeManagementModule = (function () {
   }
 
   function _openDetails(id) {
+    if (_isReadOnly()) { _roBlock(); return; }
     const b = _blockById(id);
     if (!b) return;
     _editingId = id;
@@ -5139,7 +5189,7 @@ const timeManagementModule = (function () {
     ['Tuần 4 · BTTH ngoài hợp đồng', ['Khái niệm & căn cứ phát sinh BTTH ngoài hợp đồng', 'Nguyên tắc & năng lực chịu trách nhiệm bồi thường', 'BTTH do người của pháp nhân & nguồn nguy hiểm cao độ gây ra', 'Xác định thiệt hại & mức bồi thường', '*Ôn tập phần BTTH · tình huống tổng hợp']],
     ['Ngày 27–30 · Tổng hợp', ['*Hệ thống hóa toàn bộ kiến thức: sơ đồ tư duy', '*Làm đề / tình huống tổng hợp 1', '*Làm đề / tình huống tổng hợp 2 & sửa lỗi sai', '*Rà soát cuối & chốt bài']]
   ];
-  let _rm = { sel: 0, pickOn: '', scrolled: '', pg: -1, editId: null };   // pg: window the person paged to (-1 = follow the selected day)
+  let _rm = { sel: 0, pickOn: '', scrolled: '', pg: -1, editId: null, aiTags: [], aiCustomTags: [] };   // pg: window the person paged to (-1 = follow the selected day)
   const RM_TABS = ['edit', 'preview', 'ai', 'io'];
   let _rmTab = 'edit';
 
@@ -5382,7 +5432,12 @@ const timeManagementModule = (function () {
     const L = [
       'TASK',
       'Create a ' + N + '-day study roadmap' + (o.topic ? ' for: ' + o.topic : '') + '.',
-      'Write every title and task in ' + lang + '.',
+      'Write every title and task in ' + lang + '.'
+    ];
+    if (Array.isArray(o.tags) && o.tags.length) {
+      L.push('Focus / Tags: ' + o.tags.join(', ') + '. Tailor the roadmap structure, daily titles, and checkable tasks to fit these tags.');
+    }
+    L.push(
       '',
       'OUTPUT FORMAT (follow it exactly)',
       'Reply with the plan only, as plain text: no introduction, no closing remarks, no code block, and no Markdown formatting (no headings, bold, bullet points, numbering or tables).',
@@ -5429,7 +5484,7 @@ const timeManagementModule = (function () {
       '[paste your syllabus or materials here, or delete this line]',
       '',
       'BEFORE YOU ANSWER, CHECK: exactly ' + P + ' PHASE lines, exactly ' + N + ' DAY lines, 3 tasks on every DAY line, every phase ends with a review day, and nothing else in the reply.'
-    ];
+    );
     return L.join('\n') + '\n';
   }
   /* ---- Plan data: dates · progress ---- */
@@ -5940,8 +5995,48 @@ const timeManagementModule = (function () {
     if (p.errors.length || !p.days.length || !_isDateStr(_el('#tm-rm-start').value)) { box.innerHTML = '<p class="hub-tm-rm-empty">Fix the plan on the Edit tab to see the preview.</p>'; return; }
     box.innerHTML = _rmPreviewHtml(_rmDraft(p));
   }
+  function _rmSelectedAiTags() {
+    const sel = _rm.aiTags || [], custom = _rm.aiCustomTags || [];
+    const out = _allTags().filter(function (t) { return sel.indexOf(t.id) > -1; }).map(function (t) { return t.label; });
+    return out.concat(custom);
+  }
+  function _rmRenderAiTags() {
+    const box = _el('#tm-rm-ai-tags');
+    if (!box) return;
+    const sel = _rm.aiTags || [], custom = _rm.aiCustomTags || [];
+    const builtIn = _allTags().map(function (t) {
+      const on = sel.indexOf(t.id) > -1;
+      return '<button type="button" class="hub-tm-rm-aitag" data-rm-ai-tag="' + _esc(t.id) + '" style="--tm-c:' + _safeColor(t.color) + '" aria-pressed="' + on + '"><span class="hub-tm-tag-dot"></span><span>' + _esc(t.label) + '</span></button>';
+    }).join('');
+    const cust = custom.map(function (label, idx) {
+      return '<button type="button" class="hub-tm-rm-aitag hub-tm-rm-aitag--custom" data-rm-ai-ctag="' + idx + '" aria-pressed="true" title="Click to remove"><span>' + _esc(label) + '</span><span class="hub-tm-rm-aitag-x" aria-hidden="true">×</span></button>';
+    }).join('');
+    box.innerHTML = builtIn + cust;
+  }
+  function _rmAddCustomAiTag() {
+    const inp = _el('#tm-rm-ai-tag-input');
+    if (!inp) return;
+    const raw = (inp.value || '').split(','), tags = _allTags();
+    _rm.aiTags = _rm.aiTags || [];
+    _rm.aiCustomTags = _rm.aiCustomTags || [];
+    let changed = false;
+    raw.forEach(function (part) {
+      const label = part.trim().slice(0, 40);
+      if (!label) return;
+      const low = label.toLowerCase();
+      const match = tags.filter(function (t) { return t.label.toLowerCase() === low || t.id.toLowerCase() === low; })[0];
+      if (match) {
+        if (_rm.aiTags.indexOf(match.id) === -1) { _rm.aiTags.push(match.id); changed = true; }
+      } else if (!_rm.aiCustomTags.some(function (c) { return c.toLowerCase() === low; })) {
+        _rm.aiCustomTags.push(label);
+        changed = true;
+      }
+    });
+    inp.value = '';
+    if (changed) { _rmRenderAiTags(); _rmRefreshPrompt(); }
+  }
   function _rmPromptOpts() {
-    return { topic: _el('#tm-rm-ai-topic').value.trim(), extra: _el('#tm-rm-ai-extra').value.trim(), days: _el('#tm-rm-ai-days').value, phases: _el('#tm-rm-ai-phases').value, lang: _el('#tm-rm-ai-lang').value, time: _el('#tm-rm-time').value, dur: _el('#tm-rm-dur').value };
+    return { topic: _el('#tm-rm-ai-topic').value.trim(), tags: _rmSelectedAiTags(), extra: _el('#tm-rm-ai-extra').value.trim(), days: _el('#tm-rm-ai-days').value, phases: _el('#tm-rm-ai-phases').value, lang: _el('#tm-rm-ai-lang').value, time: _el('#tm-rm-time').value, dur: _el('#tm-rm-dur').value };
   }
   function _rmRefreshPrompt() { _el('#tm-rm-prompt-view').value = _rmPrompt(_rmPromptOpts()); }
   function _rmShowTab(name) {
@@ -5952,7 +6047,7 @@ const timeManagementModule = (function () {
     });
     _rmTab = name;
     if (name === 'preview') _rmRenderPreview();
-    if (name === 'ai') _rmRefreshPrompt();
+    if (name === 'ai') { _rmRenderAiTags(); _rmRefreshPrompt(); }
   }
   /** Insert a ready-made line into the plan text and select the placeholder so it can be overtyped. */
   function _rmInsert(kind) {
@@ -6049,6 +6144,11 @@ const timeManagementModule = (function () {
     if (sub) sub.textContent = { edit: 'Change the plan, the schedule or the daily session', rerun: 'Pick a new Day 1. Progress starts again from zero', tpl: 'Pick Day 1, adjust anything, then start', 'new': 'Plan a multi-day path and follow it day by day' }[mode];
     _el('#tm-rm-save').textContent = { edit: 'Save roadmap', rerun: 'Start run', tpl: 'Start roadmap', 'new': 'Create roadmap' }[mode];
     _el('#tm-rm-delete').hidden = !r;
+    _rm.aiCustomTags = [];
+    _rm.aiTags = [_el('#tm-rm-tag').value].filter(Boolean);
+    const aiTagInp = _el('#tm-rm-ai-tag-input');
+    if (aiTagInp) aiTagInp.value = '';
+    _rmRenderAiTags();
     _rmShowTab('edit');
     _rmValidate();
     _rmApplySkin();
@@ -6327,6 +6427,7 @@ const timeManagementModule = (function () {
       const b = e.target.closest('[data-rml-act]');
       if (!b) return;
       const act = b.getAttribute('data-rml-act'), id = b.getAttribute('data-id'), r = id ? _rmById(id) : null;
+      if (_isReadOnly() && act !== 'open') { _roBlock(); return; }
       if (act === 'new') { _rmCloseLib(); _openRoadmap({ spec: { name: '30-day roadmap', text: _rmStarterText() } }); return; }
       if (act === 'use') { const t = _rmTplById(id); if (t) _rmUseTpl(t); return; }
       if (act === 'tpl-del') {
@@ -6417,6 +6518,33 @@ const timeManagementModule = (function () {
 
     // AI prompt
     ['#tm-rm-ai-topic', '#tm-rm-ai-extra', '#tm-rm-ai-days', '#tm-rm-ai-phases', '#tm-rm-ai-lang'].forEach(function (s) { _el(s).addEventListener('input', _rmRefreshPrompt); });
+    const aiTagsBox = _el('#tm-rm-ai-tags');
+    if (aiTagsBox) {
+      aiTagsBox.addEventListener('click', function (e) {
+        const b = e.target.closest('[data-rm-ai-tag]');
+        if (b) {
+          const id = b.getAttribute('data-rm-ai-tag');
+          _rm.aiTags = _rm.aiTags || [];
+          const idx = _rm.aiTags.indexOf(id);
+          if (idx > -1) _rm.aiTags.splice(idx, 1); else _rm.aiTags.push(id);
+          _rmRenderAiTags(); _rmRefreshPrompt();
+          return;
+        }
+        const cb = e.target.closest('[data-rm-ai-ctag]');
+        if (cb) {
+          const ci = parseInt(cb.getAttribute('data-rm-ai-ctag'), 10);
+          if (_rm.aiCustomTags && ci >= 0 && ci < _rm.aiCustomTags.length) {
+            _rm.aiCustomTags.splice(ci, 1);
+            _rmRenderAiTags(); _rmRefreshPrompt();
+          }
+        }
+      });
+    }
+    const aiTagAdd = _el('#tm-rm-ai-tag-add'), aiTagInput = _el('#tm-rm-ai-tag-input');
+    if (aiTagAdd) aiTagAdd.addEventListener('click', _rmAddCustomAiTag);
+    if (aiTagInput) aiTagInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); _rmAddCustomAiTag(); }
+    });
     _el('#tm-rm-ai-copy').addEventListener('click', function () {
       _rmCopy(_rmPrompt(_rmPromptOpts()), 'Prompt copied — paste it into your AI, add your syllabus, then paste its answer into the Edit tab.');
     });
@@ -6504,10 +6632,10 @@ const timeManagementModule = (function () {
       const t = e.target;
       let n;
       if (t.closest('[data-rm-toggle]')) { _lsSet(RM_KEY, _lsGet(RM_KEY) === '0' ? '1' : '0'); _renderRoadmap(); return; }
-      if (t.closest('[data-rm-edit]')) { const r = _rmGet(); if (r) _openRoadmap({ id: r.id }); return; }
+      if (t.closest('[data-rm-edit]')) { if (_isReadOnly()) { _roBlock(); return; } const r = _rmGet(); if (r) _openRoadmap({ id: r.id }); return; }
       if (t.closest('[data-rm-lib]')) { _openRmLib(); return; }
-      if (t.closest('[data-rm-archive]')) { const r = _rmGet(); if (r) _rmArchive(r, true); return; }
-      if (t.closest('[data-rm-catchup]')) { const r = _rmGet(); if (r) _rmCatchUp(r); return; }
+      if (t.closest('[data-rm-archive]')) { if (_isReadOnly()) { _roBlock(); return; } const r = _rmGet(); if (r) _rmArchive(r, true); return; }
+      if (t.closest('[data-rm-catchup]')) { if (_isReadOnly()) { _roBlock(); return; } const r = _rmGet(); if (r) _rmCatchUp(r); return; }
       if (t.closest('[data-rm-jump]')) {
         const r = _rmGet();
         if (!r) return;
@@ -6536,9 +6664,9 @@ const timeManagementModule = (function () {
         if (!r) return;
         const C = _rmCompute(r), d = C.days[k - 1];
         if (!d) return;
-        if (act === 'plan') _rmPlan(r, k, d.date);
-        else if (act === 'today') _rmToday(r, k);
-        else if (act === 'push') _rmPush(r, k);
+        if (act === 'plan') { if (_isReadOnly()) { _roBlock(); return; } _rmPlan(r, k, d.date); }
+        else if (act === 'today') { if (_isReadOnly()) { _roBlock(); return; } _rmToday(r, k); }
+        else if (act === 'push') { if (_isReadOnly()) { _roBlock(); return; } _rmPush(r, k); }
         else if (act === 'open' && d.b) { _setDate(d.b.date, { view: 'day', scrollMins: Math.max(0, _toMins(d.b.startTime) - 60) }); _focusBlock(d.b.id); }
       }
     });
@@ -6553,6 +6681,7 @@ const timeManagementModule = (function () {
       }
       const cb = e.target.closest('[data-rm-ck]');
       if (!cb) return;
+      if (_isReadOnly()) { cb.checked = !cb.checked; _roBlock(); return; }
       const bid = cb.getAttribute('data-rm-blk'), iid = cb.getAttribute('data-rm-ck');
       const b = _blockById(bid), it = b && _ck(b).find(function (i) { return i.id === iid; });
       if (!it) return;
@@ -6668,9 +6797,9 @@ const timeManagementModule = (function () {
         return;
       }
       if ((n = t.closest('[data-tl-edit]'))) { _openDetails(n.getAttribute('data-tl-edit')); return; }   // editor opens on top; Timeline stays
-      if ((n = t.closest('[data-tl-done]')))   { _habToggleDone(n.getAttribute('data-tl-done')); _tlRefresh(); return; }
+      if ((n = t.closest('[data-tl-done]')))   { if (_isReadOnly()) { _roBlock(); return; } _habToggleDone(n.getAttribute('data-tl-done')); _tlRefresh(); return; }
       if ((n = t.closest('[data-tl-next]')))   { _tlMove(n.getAttribute('data-tl-next')); return; }
-      if ((n = t.closest('[data-tl-del]')))    { _tlDelete(n.getAttribute('data-tl-del')); return; }
+      if ((n = t.closest('[data-tl-del]')))    { if (_isReadOnly()) { _roBlock(); return; } _tlDelete(n.getAttribute('data-tl-del')); return; }
       if ((n = t.closest('[data-tl-day]')))    { _closeModal(drawer); _setDate(n.getAttribute('data-tl-day'), { view: 'day' }); return; }
       if ((n = t.closest('[data-tl-go]'))) {
         const b = _blockById(n.getAttribute('data-tl-go'));
@@ -6685,6 +6814,7 @@ const timeManagementModule = (function () {
     drawer.addEventListener('change', function (e) {
       const cb = e.target.closest('[data-tl-ck]');
       if (!cb) return;
+      if (_isReadOnly()) { cb.checked = !cb.checked; _roBlock(); return; }
       const bid = cb.getAttribute('data-tl-blk'), iid = cb.getAttribute('data-tl-ck');
       const b = _blockById(bid), it = b && _ck(b).find(function (i) { return i.id === iid; });
       if (!it) return;
@@ -6709,6 +6839,7 @@ const timeManagementModule = (function () {
     return diff === 1 ? 'tomorrow' : DAY_SHORT[d.getDay()] + ' ' + _dateLabel(d);
   }
   function _tlMove(id) {
+    if (_isReadOnly()) { _roBlock(); return; }
     const b = _blockById(id);
     if (!b || b.done) return;
     const today = _todayStr(), to = _tlMoveTarget(b, today), from = b.date, s = _toMins(b.startTime), e = _toMins(b.endTime), name = _tlDayName(to, today);

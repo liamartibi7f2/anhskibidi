@@ -627,10 +627,22 @@
 
           onAuthChange: function (cb) { if (typeof cb === 'function') authListeners.push(cb); },
 
-          /** → { uid, payload, claimable?, dirty? } cho tài khoản đang đăng nhập */
+          /** → { uid, payload, claimable?, dirty?, readonly? } cho tài khoản đang đăng nhập (hoặc đang xem ở chế độ admin chỉ đọc) */
           loadTimeManagementState: async function () {
-            // Admin đang xem hộ người khác: không đọc, không ghi dữ liệu thời gian (riêng tư)
-            if (isViewMode) return { uid: viewUid, payload: null };
+            if (isViewMode) {
+              await authReadyPromise;
+              if (!currentUser || !db) return { uid: viewUid, payload: null, readonly: true };
+              try {
+                var snap = await tmRef(viewUid).get();
+                return { uid: viewUid, payload: parseDoc(snap), cloudOk: true, readonly: true, dirty: false, claimable: null };
+              } catch (e) {
+                console.warn('[Wallet.OS] Không đọc được lịch của người dùng đang xem:', e);
+                if (e && (e.code === 'permission-denied' || String(e.message || '').toLowerCase().indexOf('permission') !== -1)) {
+                  syncError('tm/view-denied');
+                }
+                return { uid: viewUid, payload: null, readonly: true };
+              }
+            }
             await authReadyPromise;
             var uid = currentUser ? currentUser.uid : null;
             var guest = lsRead(lsKey(null)), legacy = lsRead(TM_LOCAL);
@@ -682,15 +694,16 @@
             }
           },
 
-          /** cb(uid, remotePayload) mỗi khi thiết bị khác ghi; trả về hàm huỷ */
+          /** cb(uid, remotePayload) mỗi khi thiết bị khác ghi (hoặc chủ tài khoản cập nhật khi admin đang xem); trả về hàm huỷ */
           subscribeTimeManagement: function (cb) {
             if (typeof cb !== 'function') return function () {};
             var unsub = null, dead = false;
             authReadyPromise.then(function () {
-              if (dead || isViewMode || !currentUser || !db) return;
-              var uid = currentUser.uid;
+              if (dead || !currentUser || !db) return;
+              var uid = isViewMode ? viewUid : currentUser.uid;
+              if (!uid) return;
               unsub = tmRef(uid).onSnapshot(function (snap) {
-                if (snap.metadata && snap.metadata.hasPendingWrites) return;   // tiếng vọng của chính mình
+                if (!isViewMode && snap.metadata && snap.metadata.hasPendingWrites) return;   // tiếng vọng của chính mình
                 var remote = parseDoc(snap);
                 if (remote) { try { cb(uid, remote); } catch (e) { console.error(e); } }
               }, function (e) { console.warn('[Wallet.OS] Mất kết nối đồng bộ lịch:', e); });
@@ -880,18 +893,15 @@
       var timeMod = window.__registeredTime;
       var current = 'finance';
 
-      // Admin đang xem hộ tài khoản khác: ẩn tab Thời gian (lịch là dữ liệu riêng tư, không đọc/ghi)
-      if (document.body.classList.contains('wallet-readonly')) {
-        document.getElementById('tab-time').hidden = true;
-        timeMod = null;
-      }
-
-      // Cảnh báo một lần nếu lịch vượt giới hạn 1 MiB của Firestore
-      var warned = false;
+      // Cảnh báo một lần nếu lịch vượt giới hạn 1 MiB hoặc bị từ chối quyền đọc khi xem hộ
+      var warned = false, viewWarned = false;
       document.addEventListener('walletTimeSyncError', function (e) {
         if (e.detail === 'tm/too-big' && !warned) {
           warned = true;
           alert('Lịch đã quá lớn để đồng bộ lên Cloud (dữ liệu vẫn an toàn trên máy này). Hãy xoá bớt khối lịch cũ hoặc ghi chú dài.');
+        } else if (e.detail === 'tm/view-denied' && !viewWarned) {
+          viewWarned = true;
+          alert('Chưa xem được dữ liệu Thời gian của tài khoản này vì Firestore Rules chưa cấp quyền đọc cho Admin. Hãy cập nhật rule: match /users/{uid}/timeManagement/{doc} { allow read: if isOwner(uid) || isAdmin(); } trên Firebase Console.');
         }
       });
 
@@ -947,7 +957,14 @@
       '.hub-cf-card-edit-btn', '.cfd-edit', '#st-restore',
       '[data-act="edit"]', '[data-act="delete"]', '[data-act="withdraw"]', '[data-act="deposit"]',
       '[data-act="new"]', '[data-act="paid"]', '[data-act="archive"]', '[data-act="restore"]',
-      '[data-act="rm-contrib"]'
+      '[data-act="rm-contrib"]',
+      '#tm-btn-templates', '#tm-btn-set-time', '#tm-btn-habitica', '#tm-btn-focus-mode', '#tm-btn-settings',
+      '#hub-tm-btn-new-tag', '.hub-tm-tag-delete', '.hub-tm-block-delete', '.hub-tm-block-check',
+      '[data-bk-edit]', '[data-bk-complete]', '.hub-tm-ibx-add button', '.hub-tm-ibx-more', '.hub-tm-ibx-go',
+      '[data-rm-edit]', '[data-rm-archive]', '[data-rm-catchup]', '[data-rm-act="plan"]', '[data-rm-act="today"]', '[data-rm-act="push"]',
+      '.hub-tm-tl-act', '.hub-tm-tl-ckedit', '#tm-details-save', '#tm-details-delete', '#tm-rm-save', '#tm-rm-delete',
+      '[data-rml-act="new"]', '[data-rml-act="edit"]', '[data-rml-act="archive"]', '[data-rml-act="restore"]',
+      '[data-rml-act="delete"]', '[data-rml-act="rerun"]', '[data-rml-act="use"]', '[data-rml-act="tpl-del"]', '[data-rml-act="save-tpl"]'
     ];
     var css = document.createElement('style');
     css.textContent =

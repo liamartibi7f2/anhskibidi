@@ -33,11 +33,12 @@ service cloud.firestore {
       allow write: if isOwner(uid);
     }
 
-    // Lịch / Quản lý thời gian (module Time) — dữ liệu RIÊNG TƯ:
-    //   - Chỉ chủ tài khoản đọc + ghi; admin KHÔNG có quyền (kể cả đọc)
+    // Lịch / Quản lý thời gian (module Time):
+    //   - Chủ tài khoản: đọc + ghi
+    //   - Admin: CHỈ ĐỌC (không có quyền create, update, delete)
     //   - Document phải đúng dạng { schema, json, updatedAt } và json không quá lớn
     match /users/{uid}/timeManagement/{doc} {
-      allow read:   if isOwner(uid);
+      allow read:   if isOwner(uid) || isAdmin();
       allow create, update: if isOwner(uid)
                     && request.resource.data.keys().hasOnly(['schema', 'json', 'updatedAt'])
                     && request.resource.data.json is string
