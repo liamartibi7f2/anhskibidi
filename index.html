@@ -23,8 +23,9 @@
 
   <!-- File CSS độc lập đã lọc gọn -->
   <link rel="stylesheet" href="cashflow-styles.css?v=20261023" />
-  <link rel="stylesheet" href="time-management.css?v=20261124" />
+  <link rel="stylesheet" href="time-management.css?v=20261117" />
   <link rel="stylesheet" href="time-management.ember.css?v=20261117" />
+  <link rel="stylesheet" href="collaboration.css?v=20261125" />
   <link rel="stylesheet" href="wallet-os-shell.css?v=20261117" />
   <link rel="stylesheet" href="wallet-os-topbar.css?v=20261118" />
 
@@ -115,10 +116,15 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>
         <span>Thời gian</span>
       </button>
+      <button type="button" class="wos-tab" role="tab" id="tab-collab" data-tab="collab" aria-controls="collab-mount" aria-selected="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        <span>Cộng tác</span>
+      </button>
     </nav>
 
     <main id="cashflow-mount" class="module-section" role="tabpanel" aria-labelledby="tab-finance"></main>
     <main id="time-mount" class="module-section" role="tabpanel" aria-labelledby="tab-time" hidden></main>
+    <main id="collab-mount" class="module-section" role="tabpanel" aria-labelledby="tab-collab" hidden></main>
   </div>
 
   <!-- 1. Thư viện Chart.js, SheetJS (XLSX) & Firebase Compat SDK -->
@@ -770,6 +776,7 @@
         register: function (mod) {
           // Mỗi module một ô riêng — module Thời gian không được ghi đè Tài chính
           if (mod && mod.id === 'time-management') window.__registeredTime = mod;
+          else if (mod && mod.id === 'collab-hub') window.__registeredCollab = mod;
           else window.__registeredCashflow = mod;
         }
       };
@@ -779,7 +786,8 @@
   <!-- 3. Nạp nguyên bản file cashflow.js -->
   <script src="cashflow.js?v=20261124"></script>
   <script src="walletos-mobile.js?v=20261023"></script>
-  <script src="time-management.js?v=20261124"></script>
+  <script src="time-management.js?v=20261117"></script>
+  <script src="collaboration.js?v=20261125"></script>
 
   <!-- 4. Khởi chạy giao diện & các nút điều khiển -->
   <script>
@@ -896,7 +904,8 @@
       var clock = document.getElementById('st-clock');
       var TITLES = {
         finance: 'Wallet.OS — Quản Lý Tài Chính Cá Nhân',
-        time: 'Chrono.OS — Quản Lý Thời Gian'
+        time: 'Chrono.OS — Quản Lý Thời Gian',
+        collab: 'Collab.OS — Giữ Streak Cùng Nhau'
       };
       var timer = null;
       function pad(n) { return n < 10 ? '0' + n : '' + n; }
@@ -908,7 +917,7 @@
         bar.style.setProperty('--tm-m', (m * 6).toFixed(1) + 'deg');
       }
       function setSection(name) {
-        var s = name === 'time' ? 'time' : 'finance';
+        var s = (name === 'time' || name === 'collab') ? name : 'finance';
         document.body.setAttribute('data-section', s);
         document.title = TITLES[s];
         clearInterval(timer);
@@ -926,6 +935,8 @@
       var fin = document.getElementById('cashflow-mount');
       var timeEl = document.getElementById('time-mount');
       var timeMod = window.__registeredTime;
+      var collabEl = document.getElementById('collab-mount');
+      var collabMod = window.__registeredCollab;
       var current = 'finance';
 
       // Cảnh báo một lần nếu lịch vượt giới hạn 1 MiB hoặc bị từ chối quyền đọc khi xem hộ
@@ -942,10 +953,14 @@
 
       function show(name) {
         if (name === 'time' && !timeMod) name = 'finance';   // module chưa nạp → ở lại Tài chính
+        if (name === 'collab' && !collabMod) name = 'finance';
         if (current === 'time' && name !== 'time') timeMod.destroy();
-        fin.hidden = name === 'time';
+        if (current === 'collab' && name !== 'collab') collabMod.destroy();
+        fin.hidden = name !== 'finance';
+        collabEl.hidden = name !== 'collab';
         timeEl.hidden = name !== 'time';
         if (name === 'time' && current !== 'time') timeMod.render(timeEl);
+        if (name === 'collab' && current !== 'collab') collabMod.render(collabEl);
         tabs.forEach(function (t) {
           var on = t.dataset.tab === name;
           t.setAttribute('aria-selected', String(on));
@@ -967,12 +982,12 @@
       });
       window.addEventListener('hashchange', function () {
         var h = location.hash.slice(1);
-        if (h === 'finance' || h === 'time') show(h);
+        if (h === 'finance' || h === 'time' || h === 'collab') show(h);
       });
 
       var start = location.hash.slice(1);
-      if (start !== 'finance' && start !== 'time') { try { start = localStorage.getItem('wallet_os_tab'); } catch (_) {} }
-      if (start === 'time') show('time');
+      if (start !== 'finance' && start !== 'time' && start !== 'collab') { try { start = localStorage.getItem('wallet_os_tab'); } catch (_) {} }
+      if (start === 'time' || start === 'collab') show(start);
     });
   </script>
 
