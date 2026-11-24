@@ -46,6 +46,39 @@ service cloud.firestore {
       allow delete: if isOwner(uid);
     }
 
+    // Thông báo trạng thái Admin đang xem:
+    //   - Admin: đọc + ghi heartbeat/active
+    //   - Chủ tài khoản: đọc + chỉ được cập nhật trường seenAt
+    match /users/{uid}/adminAccess/{doc} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin()
+                    || (isOwner(uid) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seenAt']));
+      allow delete: if isAdmin();
+    }
+
+    // Dữ liệu riêng của Personal-hub (Flashcards, Quiz, Focus, Pomodoro, Notes, Settings):
+    match /users/{uid} {
+      allow read, write: if isOwner(uid);
+    }
+    match /users/{uid}/notes_store/{doc} {
+      allow read, write: if isOwner(uid);
+    }
+    match /users/{uid}/notes_backup_vault/{doc} {
+      allow read, write: if isOwner(uid);
+    }
+    match /users/{uid}/flashcard_store/{doc} {
+      allow read, write: if isOwner(uid);
+    }
+    match /users/{uid}/settings/{doc} {
+      allow read, write: if isOwner(uid);
+    }
+    match /shared_quizzes/{code} {
+      allow read: if true;
+      allow create: if signedIn();
+      allow update, delete: if false;
+    }
+
     // Nhật ký xem: admin tự ghi (chỉ được ghi bằng đúng uid của mình), không sửa/xóa được
     match /auditLogs/{id} {
       allow create: if isAdmin()

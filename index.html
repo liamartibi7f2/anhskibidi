@@ -544,6 +544,41 @@
               console.error('[Wallet.OS] Lỗi lưu Meta lên Cloud:', e);
             }
           }
+        },
+
+        subscribeCashFlow: function (cb) {
+          if (typeof cb !== 'function') return function () {};
+          var unsubData = null, unsubMeta = null, dead = false;
+          authReadyPromise.then(function () {
+            if (dead || !currentUser || !db) return;
+            var uid = isViewMode ? viewUid : currentUser.uid;
+            if (!uid) return;
+            var base = db.collection('users').doc(uid).collection('cashflow');
+            unsubData = base.doc('data').onSnapshot(function (snap) {
+              if (!isViewMode && snap.metadata && snap.metadata.hasPendingWrites) return;
+              if (snap.exists && snap.data()) {
+                var cloudData = Object.assign({}, cloneJSON(DEFAULT_DATA), snap.data());
+                if (!isViewMode) {
+                  writeLocal(DATA_KEY, cloudData);
+                  if (Array.isArray(cloudData.goals)) writeLocal('hub_cf_goals_backup_v1', cloudData.goals);
+                }
+                try { cb({ type: 'data', uid: uid, data: cloudData }); } catch (e) { console.error(e); }
+              }
+            }, function (e) { console.warn('[Wallet.OS] Mất kết nối đồng bộ thu chi (data):', e); });
+            unsubMeta = base.doc('meta').onSnapshot(function (snap) {
+              if (!isViewMode && snap.metadata && snap.metadata.hasPendingWrites) return;
+              if (snap.exists && snap.data()) {
+                var cloudMeta = Object.assign({}, cloneJSON(DEFAULT_META), snap.data());
+                if (!isViewMode) writeLocal(META_KEY, cloudMeta);
+                try { cb({ type: 'meta', uid: uid, meta: cloudMeta }); } catch (e) { console.error(e); }
+              }
+            }, function (e) { console.warn('[Wallet.OS] Mất kết nối đồng bộ thu chi (meta):', e); });
+          });
+          return function () {
+            dead = true;
+            if (unsubData) { try { unsubData(); } catch (e) {} unsubData = null; }
+            if (unsubMeta) { try { unsubMeta(); } catch (e) {} unsubMeta = null; }
+          };
         }
       };
 
@@ -742,7 +777,7 @@
   </script>
 
   <!-- 3. Nạp nguyên bản file cashflow.js -->
-  <script src="cashflow.js?v=20261023"></script>
+  <script src="cashflow.js?v=20261124"></script>
   <script src="walletos-mobile.js?v=20261023"></script>
   <script src="time-management.js?v=20261117"></script>
 
