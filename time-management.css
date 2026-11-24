@@ -5561,8 +5561,8 @@ body.theme-optimized .hub-tm-rm-steps li::before { border-radius: 0; }
 
 /* Toolbar button: the roadmap glyph follows the theme too */
 #time-management #tm-btn-roadmap[data-skin] svg { display: none; }
-#time-management #tm-btn-roadmap[data-skin]::before { content: ""; flex: none; width: 16px; height: 16px; background: currentColor; -webkit-mask: var(--rm-brand) center / contain no-repeat; mask: var(--rm-brand) center / contain no-repeat; }
-#time-management #tm-btn-roadmap[data-skin="tui"]::before { width: auto; height: auto; background: none; -webkit-mask: none; mask: none; content: "▶"; font: 700 0.8em/1 var(--tm-font-num); }
+#time-management #tm-btn-roadmap[data-skin]::after { content: ""; order: -1; flex: none; width: 16px; height: 16px; background: currentColor; -webkit-mask: var(--rm-brand) center / contain no-repeat; mask: var(--rm-brand) center / contain no-repeat; }
+#time-management #tm-btn-roadmap[data-skin="tui"]::after { width: auto; height: auto; background: none; -webkit-mask: none; mask: none; content: "▶"; font: 700 0.8em/1 var(--tm-font-num); }
 
 @keyframes tm-rm-blink { 50% { opacity: 0.15; } }
 @keyframes tm-rm-bob   { 50% { translate: 0 -2px; } }
