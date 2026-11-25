@@ -25,9 +25,11 @@
   <link rel="stylesheet" href="cashflow-styles.css?v=20261125" />
   <link rel="stylesheet" href="time-management.css?v=20261117" />
   <link rel="stylesheet" href="time-management.ember.css?v=20261117" />
-  <link rel="stylesheet" href="collaboration.css?v=20261125c" />
+  <link rel="stylesheet" href="collaboration.css?v=20261125e" />
   <link rel="stylesheet" href="wallet-os-shell.css?v=20261117" />
   <link rel="stylesheet" href="wallet-os-topbar.css?v=20261118" />
+  <link rel="stylesheet" href="collab-topbar.css?v=20261125" />
+  <link rel="stylesheet" href="mobile.css?v=20261125c" />
 
 </head>
 <body>
@@ -53,6 +55,24 @@
           <span class="st-wordmark">Chrono<span class="standalone-brand-dot">.OS</span></span>
           <span class="st-tagline"><span class="st-tagline-text">Time Management</span><span class="st-clock" id="st-clock">--:--</span></span>
         </span>
+
+        <!-- Cộng tác: hai vòng giao nhau = hai người cùng giữ một chuỗi (phần giao sáng lên khi cả phòng đã check-in) -->
+        <span class="st-logo st-logo--collab" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24"><circle class="co-l" cx="9" cy="12" r="6.5"/><circle class="co-r" cx="15" cy="12" r="6.5"/><path class="co-lens" d="M12 6.23A6.5 6.5 0 0 1 12 17.77A6.5 6.5 0 0 1 12 6.23Z"/></svg>
+        </span>
+        <span class="st-brand-text st-brand--collab" data-live="0">
+          <span class="st-wordmark">Collab<span class="standalone-brand-dot">.OS</span></span>
+          <span class="st-tagline"><i class="co-dot" aria-hidden="true"></i><span class="st-tagline-text">Streak Rooms</span><span class="co-state" id="st-collab-state">Sảnh</span></span>
+        </span>
+
+        <!-- "Streak rail": trạng thái phòng đang mở, luôn nhìn thấy ở thanh trên -->
+        <div class="st-rail" id="st-rail" data-state="idle" data-all="0" data-me="none" role="status" aria-live="polite">
+          <div class="st-rail-cell st-rail-hint"><span class="st-rail-k">Gợi ý</span><span class="st-rail-v">Vào một phòng để giữ streak cùng nhau</span></div>
+          <div class="st-rail-cell st-rail-room"><span class="st-rail-k">Phòng</span><span class="st-rail-v"><span class="st-rail-name" id="st-rail-room">—</span></span></div>
+          <div class="st-rail-cell st-rail-group"><span class="st-rail-k">Chuỗi chung</span><span class="st-rail-v"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3c1 3.2 4.5 5.2 4.5 9.5A4.5 4.5 0 0 1 12 17a4.5 4.5 0 0 1-4.5-4.5c0-1.7.8-2.9 1.8-3.9.2 1.1.8 1.9 1.6 2.2C10.6 8.1 11 5.6 12 3Z"/></svg><span id="st-rail-group">0</span><span class="st-rail-u">ngày</span></span></div>
+          <div class="st-rail-cell st-rail-today"><span class="st-rail-k">Hôm nay</span><span class="st-rail-v"><span id="st-rail-n">0/0</span><span class="st-rail-meter" aria-hidden="true"><i id="st-rail-bar"></i></span></span></div>
+          <div class="st-rail-cell st-rail-me"><span class="st-rail-k">Bạn</span><span class="st-rail-v"><span class="st-rail-hearts" id="st-rail-hearts"></span><span id="st-rail-me">—</span></span></div>
+        </div>
       </div>
 
       <!-- Tài khoản / Trạng thái Cloud -->
@@ -61,7 +81,12 @@
         <span id="st-auth-text">Đăng nhập Cloud</span>
       </button>
 
-      <div class="standalone-controls">
+      <!-- Mobile: nút ⋯ mở bảng điều khiển (theme, Optimize, Lite, ngôn ngữ, sao lưu) -->
+      <button type="button" id="st-menu" class="st-menu-btn" aria-expanded="false" aria-controls="st-controls" aria-label="Mở menu cài đặt">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+      </button>
+
+      <div class="standalone-controls" id="st-controls">
         <!-- Chọn Theme -->
         <span class="st-select-wrap">
           <select id="st-theme" class="standalone-select" aria-label="Giao diện">
@@ -785,9 +810,9 @@
 
   <!-- 3. Nạp nguyên bản file cashflow.js -->
   <script src="cashflow.js?v=20261125"></script>
-  <script src="walletos-mobile.js?v=20261023"></script>
+  <script src="walletos-mobile.js?v=20261125"></script>
   <script src="time-management.js?v=20261117"></script>
-  <script src="collaboration.js?v=20261125c"></script>
+  <script src="collaboration.js?v=20261125e"></script>
 
   <!-- 4. Khởi chạy giao diện & các nút điều khiển -->
   <script>
@@ -925,6 +950,71 @@
       }
       window.WalletTopbar = { setSection: setSection };
       setSection('finance');
+    })();
+  </script>
+
+  <!-- 4a'. Streak rail của tab Cộng tác: nghe sự kiện 'collab:status' do collaboration.js phát ra -->
+  <script>
+    (function () {
+      var rail = document.getElementById('st-rail');
+      if (!rail) return;
+      var brand = document.querySelector('.st-brand--collab');
+      var $ = function (id) { return document.getElementById(id); };
+      var el = { room: $('st-rail-room'), group: $('st-rail-group'), n: $('st-rail-n'), bar: $('st-rail-bar'), hearts: $('st-rail-hearts'), me: $('st-rail-me'), state: $('st-collab-state') };
+      var heartKey = '';
+      function put(node, t) { if (node && node.textContent !== t) node.textContent = t; }
+      function attr(n, k, v) { if (n && n.getAttribute(k) !== v) n.setAttribute(k, v); }
+      function hearts(h, max) {
+        var key = h + '/' + max;
+        if (key === heartKey) return;
+        heartKey = key;
+        el.hearts.textContent = '';
+        for (var i = 0; i < max; i++) { var s = document.createElement('i'); s.className = i < h ? 'is-full' : 'is-empty'; el.hearts.appendChild(s); }
+        el.hearts.setAttribute('role', 'img');
+        el.hearts.setAttribute('aria-label', h + ' trên ' + max + ' tim');
+      }
+      document.addEventListener('collab:status', function (e) {
+        var d = e.detail;
+        if (!d || d.view !== 'room' || !d.room) {
+          attr(rail, 'data-state', 'idle'); attr(rail, 'data-all', '0'); attr(rail, 'data-me', 'none');
+          attr(brand, 'data-live', '0'); put(el.state, 'Sảnh'); heartKey = '';
+          return;
+        }
+        attr(rail, 'data-state', 'room');
+        attr(brand, 'data-live', '1'); put(el.state, 'Trong phòng');
+        put(el.room, d.room);
+        attr(el.room, 'title', d.room);
+        put(el.group, String(d.group));
+        put(el.n, d.n + '/' + d.total);
+        var pct = d.total ? Math.round(d.n / d.total * 100) : 0;
+        if (el.bar.style.width !== pct + '%') el.bar.style.width = pct + '%';
+        attr(rail, 'data-all', d.all ? '1' : '0');
+        hearts(d.hearts, d.max);
+        var me = !d.todayOn ? 'rest' : d.todayDone ? 'done' : 'wait';
+        attr(rail, 'data-me', me);
+        put(el.me, me === 'rest' ? '– Nghỉ' : me === 'done' ? '✓ Đã check-in' : '● Chưa check-in');
+      });
+    })();
+  </script>
+
+  <!-- 4a''. Menu ⋯ trên điện thoại: mở/đóng bảng điều khiển -->
+  <script>
+    (function () {
+      var btn = document.getElementById('st-menu'), panel = document.getElementById('st-controls');
+      if (!btn || !panel) return;
+      function set(open) {
+        document.body.classList.toggle('st-menu-open', open);
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        btn.setAttribute('aria-label', open ? 'Đóng menu cài đặt' : 'Mở menu cài đặt');
+      }
+      btn.addEventListener('click', function (e) { e.stopPropagation(); set(!document.body.classList.contains('st-menu-open')); });
+      document.addEventListener('click', function (e) {                       // chạm ra ngoài hoặc chọn tab → đóng
+        if (!document.body.classList.contains('st-menu-open')) return;
+        if (panel.contains(e.target) && !e.target.closest('#st-backup,#st-restore')) return;
+        set(false);
+      });
+      document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && document.body.classList.contains('st-menu-open')) { set(false); btn.focus(); } });
+      window.addEventListener('resize', function () { if (window.innerWidth > 768) set(false); });
     })();
   </script>
 

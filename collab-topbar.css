@@ -1,0 +1,195 @@
+/* ==========================================================================
+   Collab.OS — nhận diện riêng cho thanh trên cùng của tab Cộng tác
+   Phạm vi: chỉ khi body[data-section="collab"]. Không đụng Wallet.OS / Chrono.OS.
+   5 theme: Cyberpunk · Solar Zen · Lo-Fi Twilight · Ember Noir · Optimize (body.theme-optimized)
+   Quy tắc: trạng thái chỉ dùng border / nền / outline / chữ, để Optimize (tắt bóng, gradient, animation) vẫn đọc được.
+   ========================================================================== */
+
+/* ---------- 0. Mặc định: ẩn toàn bộ phần Collab ở các tab khác ---------- */
+.st-logo--collab,
+.st-brand--collab,
+.st-rail { display: none; }
+
+/* ---------- 1. Tab Cộng tác: ẩn brand Tài chính / Thời gian, hiện brand Collab ---------- */
+body[data-section="collab"] .standalone-topbar .st-logo--fin,
+body[data-section="collab"] .standalone-topbar .st-brand--fin,
+body[data-section="collab"] .standalone-topbar .st-logo--time,
+body[data-section="collab"] .standalone-topbar .st-brand--time { display: none; }
+
+body[data-section="collab"] .standalone-topbar .st-logo--collab { display: inline-grid; }
+body[data-section="collab"] .standalone-topbar .st-brand--collab { display: inline-flex; flex-direction: column; }
+body[data-section="collab"] .standalone-topbar .st-rail { display: flex; }
+/* Hàng brand: logo · wordmark · rail nằm cùng một dòng, rail co lại trước khi đẩy bộ điều khiển */
+body[data-section="collab"] .standalone-topbar .standalone-brand { display: flex; align-items: center; flex-wrap: nowrap; gap: 10px; min-width: 0; }
+
+/* ---------- 2. Token (map từ token theme của dự án) ---------- */
+body[data-section="collab"] .standalone-topbar {
+  --co-accent: var(--accent-primary, #22d3ee);
+  --co-ok: var(--success, #34d399);
+  --co-warn: var(--danger, #fb7185);
+  --co-text: var(--text-primary, #e6edf3);
+  --co-muted: var(--text-muted, #8b98a5);
+  --co-line: var(--tm-line, var(--glass-border, rgba(255,255,255,.14)));
+  --co-line-strong: var(--tm-line-strong, var(--co-accent));
+  --co-surface: var(--bg-elevated, var(--bg-surface, rgba(255,255,255,.04)));
+  --co-on: var(--tm-on-accent, #06121a);
+  --co-font-ui: var(--tm-font-ui, inherit);
+  --co-font-display: var(--tm-font-display, var(--tm-font-ui, inherit));
+  --co-font-num: var(--tm-font-num, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+/* ---------- 3. Logo: hai vòng giao nhau, phần giao sáng khi cả phòng đã check-in ---------- */
+.st-logo--collab { width: 30px; height: 30px; place-items: center; flex: none; color: var(--co-accent, currentColor); border: 1px solid var(--co-line, currentColor); background: var(--co-surface, transparent); }
+.st-logo--collab svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; overflow: visible; }
+.st-logo--collab .co-l { transform: translateX(-.6px); }
+.st-logo--collab .co-r { transform: translateX(.6px); opacity: .8; }
+.st-logo--collab .co-lens { fill: currentColor; stroke: none; opacity: .15; }
+body[data-section="collab"][data-collab-all="1"] .st-logo--collab .co-lens,
+body[data-section="collab"]:has(#st-rail[data-all="1"]) .st-logo--collab .co-lens { opacity: 1; }
+
+/* ---------- 4. Wordmark + tagline ---------- */
+.st-brand--collab { gap: 1px; min-width: 0; }
+.st-brand--collab .st-wordmark { font-family: var(--co-font-display, inherit); font-weight: 800; letter-spacing: .02em; line-height: 1.1; color: var(--co-text, inherit); white-space: nowrap; }
+.st-brand--collab .standalone-brand-dot { color: var(--co-accent, currentColor); }
+.st-brand--collab .st-tagline { display: flex; align-items: center; gap: 6px; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--co-muted, inherit); white-space: nowrap; }
+.st-brand--collab .co-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--co-muted, currentColor); flex: none; }
+.st-brand--collab[data-live="1"] .co-dot { background: var(--co-ok, currentColor); }
+.st-brand--collab .co-state { font-family: var(--co-font-num, monospace); text-transform: none; letter-spacing: 0; padding: 0 6px; border: 1px solid var(--co-line, currentColor); border-radius: 999px; line-height: 16px; }
+.st-brand--collab[data-live="1"] .co-state { color: var(--co-ok, inherit); border-color: var(--co-ok, currentColor); }
+
+/* ---------- 5. Streak rail ---------- */
+.st-rail { align-items: stretch; gap: 0; margin-left: 14px; min-width: 0; flex: 0 1 auto; border: 1px solid var(--co-line, currentColor); background: var(--co-surface, transparent); border-radius: 10px; overflow: hidden; }
+.st-rail-cell { display: flex; flex-direction: column; justify-content: center; gap: 1px; padding: 3px 12px; min-width: 0; border-left: 1px solid var(--co-line, currentColor); }
+.st-rail-cell:first-child { border-left: 0; }
+.st-rail-k { font-size: 9px; letter-spacing: .14em; text-transform: uppercase; color: var(--co-muted, inherit); line-height: 1.2; }
+.st-rail-v { display: inline-flex; align-items: center; gap: 6px; font-family: var(--co-font-num, monospace); font-size: 13px; font-weight: 700; color: var(--co-text, inherit); line-height: 1.25; white-space: nowrap; }
+.st-rail-v svg { width: 13px; height: 13px; fill: currentColor; color: var(--co-warn, currentColor); flex: none; }
+.st-rail-u { font-size: 10px; font-weight: 500; color: var(--co-muted, inherit); }
+.st-rail-name { max-width: 16ch; overflow: hidden; text-overflow: ellipsis; font-family: var(--co-font-ui, inherit); }
+
+/* Hai trạng thái: chờ (chỉ hiện gợi ý) / trong phòng (hiện bốn ô) */
+.st-rail[data-state="idle"] .st-rail-cell:not(.st-rail-hint) { display: none; }
+.st-rail[data-state="room"] .st-rail-hint { display: none; }
+.st-rail-hint .st-rail-v { font-family: var(--co-font-ui, inherit); font-weight: 500; font-size: 12px; color: var(--co-muted, inherit); overflow: hidden; text-overflow: ellipsis; }
+
+/* Tiến độ hôm nay */
+.st-rail-meter { position: relative; width: 44px; height: 6px; border: 1px solid var(--co-line, currentColor); border-radius: 3px; overflow: hidden; }
+.st-rail-meter i { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--co-accent, currentColor); }
+.st-rail[data-all="1"] .st-rail-meter i { background: var(--co-ok, currentColor); }
+.st-rail[data-all="1"] .st-rail-today .st-rail-v { color: var(--co-ok, inherit); }
+
+/* Tim của mình */
+.st-rail-hearts { display: inline-flex; gap: 3px; }
+.st-rail-hearts i { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--co-warn, currentColor); box-sizing: border-box; }
+.st-rail-hearts i.is-full { background: var(--co-warn, currentColor); }
+
+/* Check-in của mình: màu + chữ (chữ đã mang nghĩa, màu chỉ là phụ) */
+.st-rail[data-me="done"] .st-rail-me .st-rail-v > span:last-child { color: var(--co-ok, inherit); }
+.st-rail[data-me="wait"] .st-rail-me .st-rail-v > span:last-child { color: var(--co-warn, inherit); }
+.st-rail[data-me="rest"] .st-rail-me .st-rail-v > span:last-child { color: var(--co-muted, inherit); }
+
+/* ==========================================================================
+   A. CYBERPUNK — "Signal room": cạnh vát neon, chấm ping
+   ========================================================================== */
+html[data-theme="cyberpunk"] .st-logo--collab { clip-path: polygon(0 6px, 6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%); border-color: transparent; background: color-mix(in srgb, var(--co-accent, #22d3ee) 16%, transparent); box-shadow: inset 0 0 0 1px var(--co-accent, #22d3ee); }
+html[data-theme="cyberpunk"] .st-brand--collab .st-wordmark { text-transform: uppercase; letter-spacing: .08em; text-shadow: 0 0 10px color-mix(in srgb, var(--co-accent, #22d3ee) 55%, transparent); }
+html[data-theme="cyberpunk"] .st-brand--collab[data-live="1"] .co-dot { animation: co-ping 1.8s ease-out infinite; }
+html[data-theme="cyberpunk"] .st-rail { border-radius: 0; clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px)); border-color: color-mix(in srgb, var(--co-accent, #22d3ee) 55%, transparent); }
+html[data-theme="cyberpunk"] .st-rail-k { color: var(--co-accent, inherit); }
+html[data-theme="cyberpunk"] .st-rail-meter { border-radius: 0; }
+html[data-theme="cyberpunk"] .st-rail[data-all="1"] { box-shadow: 0 0 14px color-mix(in srgb, var(--co-ok, #34d399) 40%, transparent); border-color: var(--co-ok, #34d399); }
+html[data-theme="cyberpunk"] .st-rail-hearts i { border-radius: 0; transform: rotate(45deg) scale(.8); }
+@keyframes co-ping { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--co-ok, #34d399) 70%, transparent); } 100% { box-shadow: 0 0 0 8px transparent; } }
+
+/* ==========================================================================
+   B. SOLAR ZEN — "Daylight desk": giấy, chữ serif, viên mực mềm
+   ========================================================================== */
+html[data-theme="solar-zen"] .st-logo--collab { border-radius: 50%; border-color: var(--co-line-strong, currentColor); background: var(--co-surface, transparent); }
+html[data-theme="solar-zen"] .st-brand--collab .st-wordmark { font-family: var(--tm-font-display, Georgia, "Times New Roman", serif); font-weight: 700; letter-spacing: 0; }
+html[data-theme="solar-zen"] .st-brand--collab .st-tagline { text-transform: none; letter-spacing: .02em; font-style: italic; font-size: 11.5px; }
+html[data-theme="solar-zen"] .st-brand--collab .co-state { font-style: normal; background: color-mix(in srgb, var(--co-accent, #b45309) 10%, transparent); }
+html[data-theme="solar-zen"] .st-rail { border-radius: 999px; padding: 0 6px; border-color: var(--co-line, currentColor); }
+html[data-theme="solar-zen"] .st-rail-cell { padding: 4px 14px; border-left-style: solid; }
+html[data-theme="solar-zen"] .st-rail-k { letter-spacing: .06em; text-transform: none; font-size: 10px; font-style: italic; }
+html[data-theme="solar-zen"] .st-rail-v { font-family: var(--tm-font-display, Georgia, serif); }
+html[data-theme="solar-zen"] .st-rail-meter { border-radius: 999px; }
+html[data-theme="solar-zen"] .st-rail-meter i { border-radius: 999px; }
+html[data-theme="solar-zen"] .st-rail-hearts i { border-width: 1.2px; }
+
+/* ==========================================================================
+   C. LO-FI TWILIGHT — "Cassette den": đường may đứt nét, nhãn dán nghiêng
+   ========================================================================== */
+html[data-theme="lofi-twilight"] .st-logo--collab { border: 2px dashed var(--co-line-strong, currentColor); border-radius: 8px; transform: rotate(-4deg); background: color-mix(in srgb, var(--co-accent, #c4b5fd) 14%, transparent); }
+html[data-theme="lofi-twilight"] .st-brand--collab .st-wordmark { letter-spacing: .01em; }
+html[data-theme="lofi-twilight"] .st-brand--collab .st-tagline .st-tagline-text::after { content: " ♪"; color: var(--co-accent, currentColor); }
+html[data-theme="lofi-twilight"] .st-brand--collab .co-state { border-style: dashed; }
+html[data-theme="lofi-twilight"] .st-rail { border: 2px dashed var(--co-line-strong, currentColor); border-radius: 12px; }
+html[data-theme="lofi-twilight"] .st-rail-cell { border-left: 2px dotted var(--co-line, currentColor); }
+html[data-theme="lofi-twilight"] .st-rail-cell:first-child { border-left: 0; }
+html[data-theme="lofi-twilight"] .st-rail-room { transform: rotate(-1.2deg); }
+html[data-theme="lofi-twilight"] .st-rail-meter { border-style: dashed; border-radius: 3px; }
+html[data-theme="lofi-twilight"] .st-rail-hearts i { border-style: dashed; }
+
+/* ==========================================================================
+   D. EMBER NOIR — "Brass ledger": đèn thau hình thoi, đường kẻ đôi, serif nghiêng
+   ========================================================================== */
+html[data-theme="ember-noir"] .st-logo--collab { border: 0; background: transparent; color: var(--ember-brass, var(--co-accent, #d4a35a)); }
+html[data-theme="ember-noir"] .st-logo--collab::before { content: ""; position: absolute; width: 22px; height: 22px; transform: rotate(45deg); border: 1px solid var(--ember-brass-line, var(--ember-brass, #d4a35a)); }
+html[data-theme="ember-noir"] .st-logo--collab { position: relative; }
+html[data-theme="ember-noir"] .st-logo--collab svg { width: 16px; height: 16px; position: relative; }
+html[data-theme="ember-noir"] .st-brand--collab .st-wordmark { font-family: var(--tm-font-display, Georgia, serif); font-style: italic; font-weight: 600; letter-spacing: .03em; }
+html[data-theme="ember-noir"] .standalone-brand-dot,
+html[data-theme="ember-noir"] .st-brand--collab .standalone-brand-dot { color: var(--ember-brass, var(--co-accent, #d4a35a)); }
+html[data-theme="ember-noir"] .st-brand--collab .st-tagline { letter-spacing: .2em; font-size: 9.5px; }
+html[data-theme="ember-noir"] .st-brand--collab .co-dot { border-radius: 0; transform: rotate(45deg); width: 5px; height: 5px; }
+html[data-theme="ember-noir"] .st-rail { border-radius: 0; border: 0; border-top: 1px solid var(--ember-brass-line, #8a6a3a); border-bottom: 1px solid var(--ember-brass-line, #8a6a3a); background: transparent; box-shadow: 0 -3px 0 -2px var(--ember-brass-line, #8a6a3a), 0 3px 0 -2px var(--ember-brass-line, #8a6a3a); }
+html[data-theme="ember-noir"] .st-rail-cell { border-left-color: var(--ember-brass-line, #8a6a3a); }
+html[data-theme="ember-noir"] .st-rail-k { color: var(--ember-brass, var(--co-muted)); letter-spacing: .22em; }
+html[data-theme="ember-noir"] .st-rail-v { font-family: var(--tm-font-display, Georgia, serif); font-style: italic; }
+html[data-theme="ember-noir"] .st-rail-meter { border-radius: 0; border-color: var(--ember-brass-line, #8a6a3a); }
+html[data-theme="ember-noir"] .st-rail-meter i { background: var(--ember-brass, #d4a35a); }
+html[data-theme="ember-noir"] .st-rail-hearts i { border-radius: 0; transform: rotate(45deg) scale(.8); border-color: var(--ember-brass, #d4a35a); }
+html[data-theme="ember-noir"] .st-rail-hearts i.is-full { background: var(--ember-brass, #d4a35a); }
+
+/* ==========================================================================
+   E. OPTIMIZE — "Terminal": phẳng, ký tự thay hình, không bóng / gradient / animation
+   ========================================================================== */
+body.theme-optimized .st-logo--collab { border: 1px solid currentColor !important; border-radius: 0 !important; background: transparent !important; box-shadow: none !important; clip-path: none !important; transform: none !important; }
+body.theme-optimized .st-brand--collab .st-wordmark { font-family: var(--tm-font-num, ui-monospace, monospace) !important; text-transform: none !important; text-shadow: none !important; font-style: normal !important; letter-spacing: 0 !important; }
+body.theme-optimized .st-brand--collab .st-wordmark::before { content: "["; color: var(--co-muted, inherit); }
+body.theme-optimized .st-brand--collab .st-wordmark::after { content: "]"; color: var(--co-muted, inherit); }
+body.theme-optimized .st-brand--collab .st-tagline { font-family: var(--tm-font-num, ui-monospace, monospace) !important; font-style: normal !important; text-transform: lowercase !important; letter-spacing: 0 !important; }
+body.theme-optimized .st-brand--collab .st-tagline-text::before { content: "┌─ "; color: var(--co-muted, inherit); }
+body.theme-optimized .st-brand--collab .st-tagline-text::after { content: "" !important; }
+body.theme-optimized .st-brand--collab .co-dot { border-radius: 0 !important; animation: none !important; box-shadow: none !important; transform: none !important; }
+body.theme-optimized .st-brand--collab .co-state { border-radius: 0 !important; border-style: solid !important; }
+body.theme-optimized .st-rail { border: 1px solid currentColor !important; border-radius: 0 !important; background: transparent !important; box-shadow: none !important; clip-path: none !important; padding: 0 !important; color: var(--co-muted, inherit); }
+body.theme-optimized .st-rail-cell { border-left: 1px solid currentColor !important; transform: none !important; }
+body.theme-optimized .st-rail-cell:first-child { border-left: 0 !important; }
+body.theme-optimized .st-rail-k { font-family: var(--tm-font-num, ui-monospace, monospace) !important; font-style: normal !important; text-transform: lowercase !important; letter-spacing: 0 !important; }
+body.theme-optimized .st-rail-v { font-family: var(--tm-font-num, ui-monospace, monospace) !important; font-style: normal !important; }
+body.theme-optimized .st-rail-v svg { display: none; }
+body.theme-optimized .st-rail-group .st-rail-v::before { content: "▲"; color: var(--co-warn, inherit); }
+body.theme-optimized .st-rail-meter { display: none !important; }
+body.theme-optimized .st-rail-hearts { gap: 1px; }
+body.theme-optimized .st-rail-hearts i { width: auto; height: auto; border: 0 !important; background: transparent !important; border-radius: 0 !important; transform: none !important; font-style: normal; line-height: 1; }
+body.theme-optimized .st-rail-hearts i.is-full::before { content: "♥"; color: var(--co-warn, inherit); }
+body.theme-optimized .st-rail-hearts i.is-empty::before { content: "♡"; color: var(--co-muted, inherit); }
+body.theme-optimized .st-rail[data-all="1"] { border-color: var(--co-ok, currentColor) !important; }
+
+/* ---------- 6. Chuyển động: tôn trọng prefers-reduced-motion và perf-lite ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .st-brand--collab .co-dot { animation: none !important; }
+}
+body.perf-lite .st-brand--collab .co-dot { animation: none !important; }
+
+/* ---------- 7. Responsive ----------
+   Dưới 768px: bố cục rail (xuống hàng riêng, rút gọn) do mobile.css đảm nhận. */
+@media (max-width: 1100px) {
+  .st-rail-cell { padding: 3px 9px; }
+  .st-rail-name { max-width: 10ch; }
+  .st-rail-meter { width: 30px; }
+}
+@media (max-width: 860px) {
+  .st-brand--collab .co-state { display: none; }
+}
