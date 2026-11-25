@@ -15,9 +15,8 @@
                      ảnh → cảnh báo hiện cho cả phòng (không tự phạt, chỉ báo).
    Quyết định "bị hủy" cũng được TÍNH LẠI từ danh sách phiếu duyệt (không lưu cờ), nên ai cũng thấy cùng một kết quả.
 
-   Hai kho dữ liệu cùng một giao diện:
-     CloudStore — Firebase Auth + Firestore (phòng thật, cập nhật trực tiếp)
-     DemoStore  — localStorage, 2 bạn ảo tự check-in (dùng khi chưa đăng nhập)
+   Bản LIVE: chỉ còn một kho dữ liệu —
+     CloudStore — Firebase Auth + Firestore (phòng thật, cập nhật trực tiếp). Phải đăng nhập Google mới dùng được.
    Streak / tim KHÔNG được lưu: luôn tính lại từ danh sách check-in (replay),
    nên không ai sửa tay con số được.
 
@@ -27,20 +26,23 @@
 const collaborationModule = (function () {
   'use strict';
 
-  var DEMO_KEY = 'hub_collab_demo_v1';
+  var LEGACY_DEMO_KEY = 'hub_collab_demo_v1';   // dữ liệu demo cũ trong localStorage: xoá một lần khi mở module
   var FORM_KEY = 'hub_collab_form';
+  var WRECAP_KEY = 'hub_collab_wrecap_v1';
   var UNDO_MS = 5 * 60 * 1000;                    // hoàn tác check-in trong 5 phút
   var DEFAULT_CFG = { maxHearts: 5, regenDays: 7, cutoff: 4, challenge: true };   // cutoff = giờ chốt ngày (04:00 sáng)
   var HEART_CHOICES = [3, 5, 7, 10];
   var REGEN_CHOICES = [3, 5, 7, 14];
   var FREQ = { daily: 'Mỗi ngày', weekdays: 'Thứ 2 – Thứ 6' };
   var DOW = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
+  var DOW_SHORT = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
   var DEFAULT_MAX_MEMBERS = 10, LEGACY_MAX_MEMBERS = 20;       // phòng mới tối đa 10 người; phòng cũ (chưa có trường này) giữ mức 20
   var MAX_CHOICES = [2, 3, 4, 5, 6, 8, 10, 15, 20];
   var EXPIRY = [['1d', '1 ngày', 1], ['7d', '7 ngày', 7], ['30d', '30 ngày', 30], ['never', 'Không hết hạn', 0]];
   var DEFAULT_EXPIRY = '7d';
   var REVIEW_MS = 72 * 3600 * 1000;               // cả phòng được duyệt ảnh trong 72 giờ sau check-in; hết hạn thì chốt, không đổi được nữa
   var DUP_MAX = 40;                                // ≤ 40/256 bit khác nhau = "gần như cùng một ảnh"
+  var CHAL_MS = 120 * 1000;                        // mỗi mã thử thách có hiệu lực 2 phút trước khi tự xoay mã mới
   var VOTE_TEXT = { ok: 'Hợp lệ', sus: 'Nghi ngờ' };
 
   /* ───────────── ngày giờ ───────────── */
@@ -48,6 +50,9 @@ const collaborationModule = (function () {
   function ymd(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
   function parseYmd(s) { var p = String(s).split('-'); return new Date(+p[0], +p[1] - 1, +p[2]); }
   function addDays(s, n) { var d = parseYmd(s); d.setDate(d.getDate() + n); return ymd(d); }
+  function mondayOf(s) { var w = parseYmd(s).getDay(); return addDays(s, -((w + 6) % 7)); }
+  function lastWeekStart(today) { return addDays(mondayOf(today), -7); }
+  function isMonday(s) { return parseYmd(s).getDay() === 1; }
   function dayKey(ms, cutoff) { return ymd(new Date(ms - cutoff * 3600000)); }      // "ngày" bắt đầu lúc cutoff, không phải 00:00
   function fmtTime(ms) { var d = new Date(ms); return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
   function fmtDay(s) { var d = parseYmd(s); return pad(d.getDate()) + '/' + pad(d.getMonth() + 1); }
@@ -97,6 +102,10 @@ const collaborationModule = (function () {
   function leftText(ms) {
     var m = Math.max(0, Math.floor(ms / 60000));
     return Math.floor(m / 60) + 'g ' + pad(m % 60) + 'p';
+  }
+  function fmtClockSec(ms) {
+    var s = Math.max(0, Math.ceil(ms / 1000));
+    return pad(Math.floor(s / 60)) + ':' + pad(s % 60);
   }
   function fmtStamp(ms) { return fmtTime(ms) + ' · ' + fmtDay(ymd(new Date(ms))); }
   /** Khoá hạn → mốc thời gian (ms) hoặc null = không hết hạn. */
@@ -238,11 +247,171 @@ const collaborationModule = (function () {
   function chInfo(id) {
     var m = /^([PF])(\d{1,3})$/.exec(id || ''); if (!m) return null;
     return m[1] === 'P'
-      ? { kind: 'paper', num: m[2], stamp: 'MÃ ' + m[2], how: 'Viết số ' + m[2] + ' lên giấy rồi cầm vào khung hình.', check: 'phải thấy số này viết trên giấy trong ảnh' }
-      : { kind: 'fingers', num: m[2], stamp: 'MÃ ' + m[2] + ' NGÓN', how: 'Giơ đúng ' + m[2] + ' ngón tay trước ống kính (dùng cả hai tay cũng được).', check: 'phải thấy đúng ' + m[2] + ' ngón tay trong ảnh' };
+      ? { kind: 'paper', num: m[2], stamp: 'MÃ ' + m[2], badge: m[2], icon: '✍', short: 'Viết lên giấy', hud: 'Viết số ' + m[2], how: 'Viết số ' + m[2] + ' lên giấy rồi cầm vào khung hình.', check: 'phải thấy số này viết trên giấy trong ảnh' }
+      : { kind: 'fingers', num: m[2], stamp: 'MÃ ' + m[2] + ' NGÓN', badge: m[2] + ' NGÓN', icon: '✋', short: 'Giơ ngón tay', hud: 'Giơ ' + m[2] + ' ngón', how: 'Giơ đúng ' + m[2] + ' ngón tay trước ống kính (dùng cả hai tay cũng được).', check: 'phải thấy đúng ' + m[2] + ' ngón tay trong ảnh' };
   }
   function rand(n) { var b = new Uint32Array(1); (window.crypto || window.msCrypto).getRandomValues(b); return b[0] % n; }
-  function newChallenge() { return rand(2) ? 'P' + (100 + rand(900)) : 'F' + (1 + rand(10)); }
+  function newChallenge(kind) {
+    var k = kind === 'paper' ? 1 : kind === 'fingers' ? 0 : rand(2);
+    return k ? 'P' + (100 + rand(900)) : 'F' + (1 + rand(10));
+  }
+
+  /** Tổng kết 1 tuần (Thứ 2 → Chủ nhật): đúng giờ nhất, người kéo streak, ngày hay lỡ nhất, tỉ lệ hoàn thành và 7 ô ngày. */
+  function weeklySummary(room, c, weekStart, skipPrev) {
+    var members = room.members || [], checkins = room.checkins || {}, today = c.today;
+    var latest = lastWeekStart(today), ws = mondayOf(weekStart || latest), we = addDays(ws, 6);
+    var minStart = '';
+    members.forEach(function (m) { var s = startOf(m); if (s && (!minStart || s < minStart)) minStart = s; });
+    var minWeekStart = minStart ? mondayOf(minStart) : ws;
+    var days = [];
+    for (var i = 0; i < 7; i++) days.push(addDays(ws, i));
+
+    var totDue = 0, totDone = 0, okN = 0, lateN = 0, vlateN = 0, missN = 0, syncDays = 0, schedDays = 0;
+    var perM = {}, dayStats = [];
+    members.forEach(function (m) {
+      perM[m.uid] = { m: m, due: 0, done: 0, ok: 0, late: 0, vlate: 0, miss: 0, voided: 0, deltaSum: 0, deltaCnt: 0, streakEnd: 0, bestBefore: 0, bestInWeek: 0, newBest: false, log: [] };
+    });
+
+    days.forEach(function (d) {
+      var dDue = 0, dDone = 0, dOk = 0, dLate = 0, dVlate = 0, dMiss = 0, dVoid = 0;
+      members.forEach(function (m) {
+        var pm = perM[m.uid], cm = commitAt(m, d), due = !!cm && scheduled(m, d);
+        var ci = (checkins[m.uid] || {})[d], it = c.by && c.by[m.uid + '|' + d], voided = !!(it && it.j && it.j.voided);
+        var valid = !!ci && !voided;
+        if (!due) {
+          pm.log.push([d, valid ? 'ok' : (d > today ? 'none' : 'rest'), valid ? ci : null]);
+          return;
+        }
+        dDue++; totDue++; pm.due++;
+        if (valid) {
+          dDone++; totDone++; pm.done++;
+          var li = lateInfo(ci, cm, d, room.cfg.cutoff);
+          if (li.tier === 'vlate') { dVlate++; vlateN++; pm.vlate++; pm.log.push([d, 'vlate', ci]); }
+          else if (li.tier === 'late') { dLate++; lateN++; pm.late++; pm.log.push([d, 'late', ci]); }
+          else { dOk++; okN++; pm.ok++; pm.log.push([d, 'ok', ci]); }
+          if (cm && cm.target) {
+            var tm = targetMs(d, cm.target, room.cfg.cutoff);
+            if (tm) { pm.deltaSum += (ci.at - tm) / 60000; pm.deltaCnt++; }
+          }
+        } else {
+          if (voided) { dVoid++; pm.voided++; }
+          if (d < today) { dMiss++; missN++; pm.miss++; }
+          var stLog = c.states && c.states[m.uid] && c.states[m.uid].log || [];
+          var lc = d === today ? 'today' : d > today ? 'none' : 'miss';
+          for (var li2 = 0; li2 < stLog.length; li2++) if (stLog[li2][0] === d) { lc = stLog[li2][1]; break; }
+          pm.log.push([d, lc, null]);
+        }
+      });
+      if (dDue > 0 && d < today) { schedDays++; if (dDone === dDue) syncDays++; }
+      var w = parseYmd(d).getDay();
+      var st = !dDue ? 'rest' : (d > today ? 'future' : (dMiss > 0 || dVlate > 0) ? 'bad' : dLate > 0 ? 'warn' : 'perfect');
+      dayStats.push({ date: d, dow: DOW_SHORT[w], dayName: DOW[w], due: dDue, done: dDone, ok: dOk, late: dLate, vlate: dVlate, miss: dMiss, voided: dVoid, status: st });
+    });
+
+    var rows = members.map(function (m) {
+      var pm = perM[m.uid], runS = 0, bBefore = 0, bWeek = 0, sEnd = 0;
+      var log = (c.states && c.states[m.uid] && c.states[m.uid].log) || [];
+      for (var j = 0; j < log.length; j++) {
+        var ed = log[j][0], ek = log[j][1];
+        if (ed > we) break;
+        if (ek === 'ok' || ek === 'late' || ek === 'vlate') {
+          runS++;
+          if (ed < ws) { if (runS > bBefore) bBefore = runS; }
+          else { if (runS > bWeek) bWeek = runS; }
+        } else if (ek === 'ko') {
+          runS = 0;
+        }
+        sEnd = runS;
+      }
+      pm.streakEnd = sEnd; pm.bestBefore = bBefore; pm.bestInWeek = bWeek;
+      pm.newBest = bBefore > 0 && bWeek > bBefore;
+      return pm;
+    });
+
+    function cmpPunctual(a, b) {
+      var ra = a.ok / a.due, rb = b.ok / b.due;
+      if (Math.abs(rb - ra) > 1e-9) return rb - ra;
+      if (b.ok !== a.ok) return b.ok - a.ok;
+      var ha = a.deltaCnt > 0 ? 1 : 0, hb = b.deltaCnt > 0 ? 1 : 0;
+      if (hb !== ha) return hb - ha;
+      if (ha && hb) {
+        var da = Math.round(a.deltaSum / a.deltaCnt), db = Math.round(b.deltaSum / b.deltaCnt);
+        if (da !== db) return da - db;
+      }
+      return 0;
+    }
+    var pCands = rows.filter(function (pm) { return pm.due > 0 && pm.ok > 0; }).sort(cmpPunctual);
+    var mostPunctual = null;
+    if (pCands.length) {
+      var pTop = pCands[0], pWin = pCands.filter(function (pm) { return cmpPunctual(pm, pTop) === 0; });
+      var earlyMins = pTop.deltaCnt > 0 ? Math.max(0, Math.round(-pTop.deltaSum / pTop.deltaCnt)) : 0;
+      mostPunctual = {
+        winners: pWin.map(function (pm) { return { uid: pm.m.uid, name: pm.m.name }; }),
+        names: pWin.map(function (pm) { return pm.m.name; }).join(' & '),
+        ratePct: Math.round(pTop.ok / pTop.due * 100),
+        ok: pTop.ok, due: pTop.due, earlyMins: earlyMins
+      };
+    }
+
+    function cmpStreakHero(a, b) {
+      var pa = (a.miss === 0 && a.due > 0) ? 1 : 0, pb = (b.miss === 0 && b.due > 0) ? 1 : 0;
+      if (pb !== pa) return pb - pa;
+      if (b.done !== a.done) return b.done - a.done;
+      if (b.streakEnd !== a.streakEnd) return b.streakEnd - a.streakEnd;
+      return 0;
+    }
+    var sCands = rows.filter(function (pm) { return pm.done > 0; }).sort(cmpStreakHero);
+    var streakHero = null;
+    if (sCands.length) {
+      var sTop = sCands[0], sWin = sCands.filter(function (pm) { return cmpStreakHero(pm, sTop) === 0; });
+      streakHero = {
+        winners: sWin.map(function (pm) { return { uid: pm.m.uid, name: pm.m.name }; }),
+        names: sWin.map(function (pm) { return pm.m.name; }).join(' & '),
+        gain: sTop.done, due: sTop.due, streak: sTop.streakEnd,
+        perfect: sTop.miss === 0 && sTop.due > 0,
+        newBest: sWin.some(function (pm) { return pm.newBest; })
+      };
+    }
+
+    var weakestDay = null;
+    if (totDue > 0) {
+      var mDays = dayStats.filter(function (ds) { return ds.due > 0 && ds.miss > 0; }).sort(function (a, b) {
+        if (b.miss !== a.miss) return b.miss - a.miss;
+        var ra = a.miss / a.due, rb = b.miss / b.due;
+        if (Math.abs(rb - ra) > 1e-9) return rb - ra;
+        return (b.vlate * 2 + b.late) - (a.vlate * 2 + a.late);
+      });
+      if (mDays.length) {
+        var wTop = mDays[0];
+        weakestDay = {
+          perfect: false, date: wTop.date, dow: wTop.dow, dayName: wTop.dayName,
+          miss: wTop.miss, due: wTop.due, done: wTop.done, missPct: Math.round(wTop.miss / wTop.due * 100)
+        };
+      } else {
+        var lDays = dayStats.filter(function (ds) { return ds.due > 0 && (ds.late + ds.vlate) > 0; }).sort(function (a, b) {
+          return (b.vlate * 2 + b.late) - (a.vlate * 2 + a.late);
+        });
+        weakestDay = {
+          perfect: true,
+          lateDay: lDays.length ? { date: lDays[0].date, dow: lDays[0].dow, dayName: lDays[0].dayName, late: lDays[0].late + lDays[0].vlate } : null
+        };
+      }
+    }
+
+    var hasData = totDue > 0;
+    var rate = hasData ? Math.round(totDone / totDue * 100) : 0;
+    var prevRate = null, deltaPct = null;
+    if (!skipPrev && hasData && ws > minWeekStart) {
+      var prev = weeklySummary(room, c, addDays(ws, -7), true);
+      if (prev.hasData) { prevRate = prev.rate; deltaPct = rate - prev.rate; }
+    }
+    return {
+      weekStart: ws, weekEnd: we, hasData: hasData, canPrev: ws > minWeekStart, canNext: ws < latest,
+      totDue: totDue, totDone: totDone, okN: okN, lateN: lateN, vlateN: vlateN, missN: missN,
+      syncDays: syncDays, schedDays: schedDays, rate: rate, prevRate: prevRate, deltaPct: deltaPct,
+      mostPunctual: mostPunctual, streakHero: streakHero, weakestDay: weakestDay, days: dayStats, rows: rows
+    };
+  }
 
   function computeRoom(room, nowMs) {
     var cfg = room.cfg, today = dayKey(nowMs, cfg.cutoff), doneBy = {}, states = {}, flat = [], byUid = {}, reviews = room.reviews || [];
@@ -267,135 +436,9 @@ const collaborationModule = (function () {
     all.sort(function (a, b) { return b.at - a.at; });
     var from = addDays(today, -7);
     var alerts = all.filter(function (x) { return x.date >= from && (x.j.voided || x.dup || (x.j.sus && x.j.open)); }).slice(0, 6);
-    return { today: today, states: states, group: groupStreak(room.members, doneBy, today), feed: all.slice(0, 8), all: all, allFeed: all, by: by, alerts: alerts };
-  }
-
-  /* ───────────── DemoStore (localStorage + 2 bạn ảo) ───────────── */
-  function DemoStore() {
-    var ME = 'me', db = load(), watching = null;
-    function load() { try { var r = JSON.parse(localStorage.getItem(DEMO_KEY)); if (r && r.rooms) return r; } catch (e) {} return { rooms: {} }; }
-    function save() { try { localStorage.setItem(DEMO_KEY, JSON.stringify(db)); } catch (e) {} }
-    function botMs(uid, date) { return parseYmd(date).getTime() + (7 * 60 + hash(uid + date) % (15 * 60)) * 60000; }   // 07:00 – 22:00
-    function out(r) {
-      return { id: r.id, name: r.name, code: r.code, ownerUid: r.ownerUid, cfg: r.cfg,
-        joinOpen: r.joinOpen !== false, maxMembers: r.maxMembers || LEGACY_MAX_MEMBERS, deleting: false,
-        invite: { exists: true, expiresAt: r.inviteExp == null ? null : r.inviteExp },
-        members: Object.keys(r.members).map(function (k) { return r.members[k]; }),
-        checkins: r.checkins, nudges: Object.keys(r.nudges).map(function (k) { return r.nudges[k]; }),
-        reviews: Object.keys(r.reviews || {}).map(function (k) { return r.reviews[k]; }) };
-    }
-    function simulate(r) {                     // bạn ảo tự check-in khi tới giờ của họ
-      var now = Date.now(), today = dayKey(now, r.cfg.cutoff), changed = false;
-      Object.keys(r.members).forEach(function (uid) {
-        var m = r.members[uid];
-        if (!m.bot || !scheduled(m, today)) return;
-        r.checkins[uid] = r.checkins[uid] || {};
-        if (!r.checkins[uid][today] && now >= botMs(uid, today)) { r.checkins[uid][today] = { at: botMs(uid, today), note: '', hasPhoto: true }; changed = true; }
-      });
-      var flat = [];                                   // bạn ảo duyệt ảnh của bạn sau ~12 giây: ảnh trùng → "nghi ngờ", còn lại → "hợp lệ"
-      Object.keys(r.checkins).forEach(function (u) { Object.keys(r.checkins[u]).forEach(function (d) { var c = r.checkins[u][d]; flat.push({ uid: u, date: d, at: c.at, ph: c.ph || '', pm: c.pm || '' }); }); });
-      var dups = findDups(flat), mine = r.checkins[ME] || {};
-      r.reviews = r.reviews || {};
-      Object.keys(r.members).forEach(function (uid) {
-        if (!r.members[uid].bot) return;
-        Object.keys(mine).forEach(function (d) {
-          var c = mine[d], sec = Math.floor(c.at / 1000), key = ME + '_' + d + '_' + uid, cur = r.reviews[key];
-          if (!c.hasPhoto || now < c.at + 12000 || (cur && cur.ref === sec)) return;
-          r.reviews[key] = { target: ME + '_' + d, by: uid, v: dups[ME + '|' + d] ? 'sus' : 'ok', ref: sec, at: now };
-          changed = true;
-        });
-      });
-      return changed;
-    }
-    function emit() { if (watching && db.rooms[watching.id]) watching.cb(out(db.rooms[watching.id])); }
-    function room(id) { var r = db.rooms[id]; if (!r) throw new Error('Phòng không còn tồn tại.'); return r; }
-    function member(prof, today) { return { uid: ME, name: prof.name, joinedAt: Date.now(), commits: [{ from: today, title: prof.title, freq: prof.freq, target: prof.target || '' }] }; }
-    function ok(v) { return Promise.resolve(v); }
-    function botPhoto(uid, name, date, at) {            // ảnh minh hoạ cho bạn ảo, sinh ra tại chỗ
-      var h = hash(uid + date) % 360, svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 180'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='hsl(" + h + ",55%,38%)'/><stop offset='1' stop-color='hsl(" + ((h + 60) % 360) + ",60%,22%)'/></linearGradient></defs><rect width='240' height='180' fill='url(#g)'/><text x='120' y='104' font-family='sans-serif' font-size='72' font-weight='700' fill='white' fill-opacity='.85' text-anchor='middle'>" + name.charAt(0).toUpperCase() + "</text><rect x='8' y='148' width='132' height='24' rx='5' fill='black' fill-opacity='.55'/><text x='16' y='165' font-family='monospace' font-size='13' fill='white'>" + fmtTime(at) + " · " + fmtDay(date) + " · " + name + "</text></svg>";
-      return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
-    }
-    return {
-      mode: 'demo', uid: ME, name: '',
-      listRooms: function () {
-        return ok(Object.keys(db.rooms).filter(function (k) { return db.rooms[k].members[ME]; }).map(function (k) {
-          var r = db.rooms[k]; return { id: r.id, name: r.name, code: r.code, owner: r.ownerUid === ME, members: Object.keys(r.members).map(function (u) { return r.members[u].name; }) };
-        }));
-      },
-      createRoom: function (name, prof, today) {
-        var id = 'demo-' + genCode().slice(4).replace('-', ''), r = { id: id, name: name, code: genCode(), ownerUid: ME, cfg: JSON.parse(JSON.stringify(DEFAULT_CFG)), members: {}, checkins: {}, nudges: {}, reviews: {},
-          maxMembers: DEFAULT_MAX_MEMBERS, joinOpen: true, inviteExp: Date.now() + 7 * 86400000 };
-        r.members[ME] = member(prof, today);
-        var from = addDays(today, -10);
-        [['bot-budy', 'Budy', 'Học 2 giờ', 'daily', 7], ['bot-mia', 'Mia', 'Đọc sách 30 phút', 'weekdays', 5]].forEach(function (b) {
-          var m = { uid: b[0], name: b[1], bot: true, commits: [{ from: from, title: b[2], freq: b[3], target: '' }] };
-          r.members[b[0]] = m; r.checkins[b[0]] = {};
-          for (var d = from; d < today; d = addDays(d, 1)) if (scheduled(m, d) && hash(b[0] + d) % b[4] !== 0) r.checkins[b[0]][d] = { at: botMs(b[0], d), note: '', hasPhoto: true };
-        });
-        db.rooms[id] = r; simulate(r); save(); return ok(id);
-      },
-      joinRoom: function (code, prof, today) {
-        var id = Object.keys(db.rooms).filter(function (k) { return db.rooms[k].code === code; })[0];
-        if (!id) return Promise.reject(new Error('Không tìm thấy mã này. (Chế độ demo chỉ có phòng do bạn tạo trên máy này.)'));
-        var jr = db.rooms[id];
-        if (!jr.members[ME]) {
-          if (jr.inviteExp != null && jr.inviteExp <= Date.now()) return Promise.reject(new Error('Mã mời đã hết hạn — nhờ chủ phòng đổi mã mới.'));
-          if (jr.joinOpen === false) return Promise.reject(new Error('Phòng đang khoá, chưa nhận thêm người.'));
-          if (Object.keys(jr.members).length >= (jr.maxMembers || LEGACY_MAX_MEMBERS)) return Promise.reject(new Error('Phòng đã đủ người.'));
-          jr.members[ME] = member(prof, today); save();
-        }
-        return ok(id);
-      },
-      watch: function (id, cb) { watching = { id: id, cb: cb }; if (simulate(room(id))) save(); emit(); return function () { watching = null; }; },
-      poke: function () { if (watching && db.rooms[watching.id] && simulate(db.rooms[watching.id])) { save(); emit(); } },
-      checkIn: function (id, date, note, late, photo, extra) {
-        extra = extra || {};
-        if (!photo) return Promise.reject(new Error('Cần chụp ảnh để check-in.'));
-        var r = room(id); r.checkins[ME] = r.checkins[ME] || {};
-        if (r.cfg.challenge && !chInfo(extra.ch)) return Promise.reject(new Error('Phòng đang bật mã thử thách — ảnh cần kèm mã.'));
-        r.checkins[ME][date] = { at: Date.now(), note: note || '', late: !!late, hasPhoto: true, photo: photo, ch: extra.ch || '', ph: extra.ph || '', pm: extra.pm || '' };
-        save(); emit(); return ok();
-      },
-      review: function (id, uid, date, v) {
-        var r = room(id), c = (r.checkins[uid] || {})[date];
-        if (!c || !c.hasPhoto || uid === ME || (v !== 'ok' && v !== 'sus')) return Promise.reject(new Error('Không duyệt được check-in này.'));
-        if (Date.now() > c.at + REVIEW_MS) return Promise.reject(new Error('Đã hết hạn duyệt ảnh này (72 giờ).'));
-        r.reviews = r.reviews || {};
-        r.reviews[uid + '_' + date + '_' + ME] = { target: uid + '_' + date, by: ME, v: v, ref: Math.floor(c.at / 1000), at: Date.now() };
-        save(); emit(); return ok();
-      },
-      getPhoto: function (id, uid, date) {
-        var r = room(id), c = (r.checkins[uid] || {})[date];
-        if (!c || !c.hasPhoto) return ok('');
-        return ok(c.photo || botPhoto(uid, r.members[uid] ? r.members[uid].name : '?', date, c.at));
-      },
-      undo: function (id, date) { var r = room(id); if (r.checkins[ME]) delete r.checkins[ME][date]; save(); emit(); return ok(); },
-      setCommits: function (id, commits) { room(id).members[ME].commits = commits; save(); emit(); return ok(); },
-      nudge: function (id, to, date) {
-        var r = room(id); r.nudges[ME + '_' + to + '_' + date] = { from: ME, to: to, date: date };
-        var m = r.members[to];
-        if (m && m.bot && scheduled(m, date)) { r.checkins[to] = r.checkins[to] || {}; if (!r.checkins[to][date]) r.checkins[to][date] = { at: Date.now(), note: 'vừa được nhắc 😅', hasPhoto: true }; }   // bạn ảo phản ứng ngay
-        save(); emit(); return ok();
-      },
-      setCfg: function (id, cfg) { var r = room(id); r.cfg.maxHearts = cfg.maxHearts; r.cfg.regenDays = cfg.regenDays; if ('challenge' in cfg) r.cfg.challenge = !!cfg.challenge; save(); emit(); return ok(); },
-      /* ---- quản lý phòng (demo: chạy trên localStorage, bạn ảo cũng kick / nhận chủ phòng được để thử giao diện) ---- */
-      setInfo: function (id, info) { var r = room(id); r.name = info.name; r.maxMembers = info.maxMembers; save(); emit(); return ok(); },
-      setJoinOpen: function (id, open) { room(id).joinOpen = !!open; save(); emit(); return ok(); },
-      setInviteExpiry: function (id, code, ms) { room(id).inviteExp = ms; save(); emit(); return ok(); },
-      regenCode: function (id, oldCode, ms) { var r = room(id); r.code = genCode(); r.inviteExp = ms; save(); emit(); return ok(r.code); },
-      kick: function (id, uid, o) {
-        var r = room(id); if (uid === ME) return Promise.reject(new Error('Không thể tự mời mình ra.'));
-        delete r.members[uid]; delete r.checkins[uid];
-        Object.keys(r.nudges).forEach(function (k) { if (r.nudges[k].from === uid || r.nudges[k].to === uid) delete r.nudges[k]; });
-        Object.keys(r.reviews || {}).forEach(function (k) { if (r.reviews[k].by === uid) delete r.reviews[k]; });
-        var code = ''; if (o && o.regen) { code = genCode(); r.code = code; r.inviteExp = o.expiryMs; }
-        save(); emit(); return ok(code);
-      },
-      transferOwner: function (id, uid) { var r = room(id); if (!r.members[uid]) return Promise.reject(new Error('Người này không còn trong phòng.')); r.ownerUid = uid; save(); emit(); return ok(); },
-      deleteRoom: function (id, onProgress) { room(id); if (onProgress) onProgress(1, 1); delete db.rooms[id]; save(); return ok(); },
-      forget: function () { return ok(); },
-      leave: function (id) { var r = room(id); delete r.members[ME]; delete db.rooms[id]; save(); return ok(); }
-    };
+    var res = { today: today, states: states, group: groupStreak(room.members, doneBy, today), feed: all.slice(0, 8), all: all, allFeed: all, by: by, alerts: alerts };
+    res.weekly = weeklySummary(room, res, lastWeekStart(today));
+    return res;
   }
 
   /* ───────────── CloudStore (Firebase Auth + Firestore) ─────────────
@@ -583,14 +626,28 @@ const collaborationModule = (function () {
   var S = null;
   function freshState() {
     var f = {}; try { f = JSON.parse(localStorage.getItem(FORM_KEY)) || {}; } catch (e) {}
-    return { root: null, store: null, view: 'lobby', roomId: '', rooms: null, room: null, calc: null, unwatch: null, timer: null, authUnsub: null,
+    return { root: null, store: null, view: 'lobby', roomId: '', rooms: null, room: null, calc: null, unwatch: null, timer: null, authUnsub: null, authReady: false,
       tab: 'create', roomTab: 'today', arc: null, busy: false, dlg: '', toastT: null, lastDay: '', cam: null, photos: {}, photoView: null, photoList: null,
       form: { room: '', code: '', name: f.name || '', title: f.title || '', freq: f.freq || 'daily', target: f.target || '' },
       dlgForm: null, mg: null, confirm: null };
   }
   function arcState(today) {
-    if (!S.arc) S.arc = { month: monthKey(today), day: today, mode: 'day', member: 'all', status: 'all', q: '' };
+    if (!S.arc) S.arc = { month: monthKey(today), day: today, week: lastWeekStart(today), mode: 'day', member: 'all', status: 'all', q: '' };
     return S.arc;
+  }
+  function wRecapMap() { try { return JSON.parse(localStorage.getItem(WRECAP_KEY)) || {}; } catch (e) { return {}; } }
+  function setWRecapOpen(roomId, weekStart, open) {
+    try {
+      var m = wRecapMap();
+      m[roomId] = { week: weekStart, open: !!open };
+      localStorage.setItem(WRECAP_KEY, JSON.stringify(m));
+    } catch (e) {}
+  }
+  function isWeeklyOpen(roomId, w, today) {
+    if (!w || !w.hasData) return false;
+    var rec = wRecapMap()[roomId];
+    if (rec && rec.week === w.weekStart) return !!rec.open;
+    return isMonday(today);
   }
   function heartsHtml(h, max) {
     var out = '<span class="hub-collab-hearts" role="img" aria-label="' + h + ' trên ' + max + ' tim">';
@@ -609,9 +666,26 @@ const collaborationModule = (function () {
     return (e && e.message) || 'Có lỗi xảy ra, thử lại nhé.';
   }
 
+  /* ───────────── cổng đăng nhập (bản Live: không còn chế độ demo) ───────────── */
+  function hasFirebase() {
+    try { return typeof firebase !== 'undefined' && !!firebase.apps && firebase.apps.length > 0; } catch (e) { return false; }
+  }
+  function viewGate() {
+    var inner;
+    if (!hasFirebase()) inner = '<p class="hub-collab-muted">Chưa kết nối được Firebase nên Collab Hub chưa dùng được. Hãy kiểm tra cấu hình Firebase của trang rồi tải lại.</p>';
+    else if (!S.authReady) inner = '<p class="hub-collab-muted">Đang kiểm tra đăng nhập…</p>';
+    else inner = '<h3 class="hub-collab-h3">Đăng nhập để bắt đầu</h3>' +
+      '<p class="hub-collab-muted">Phòng giữ streak chạy trực tiếp trên cloud: bạn bè vào cùng phòng bằng mã mời, check-in và duyệt ảnh của nhau theo thời gian thực.</p>' +
+      '<button type="button" class="hub-collab-btn is-primary" data-act="signin"' + (S.busy ? ' disabled' : '') + '>Đăng nhập bằng Google</button>';
+    return '<header class="hub-collab-header"><div><h2 class="hub-collab-title">Collab Hub</h2>' +
+        '<p class="hub-collab-subtitle">Giữ streak cùng nhau — mỗi người một cam kết, mỗi ngày một lần check-in.</p></div></header>' +
+      '<div class="hub-collab-lobby"><section class="hub-collab-panel hub-collab-gate">' + inner + '</section></div>';
+  }
+
   /* ───────────── sảnh: phòng của bạn + tạo / vào phòng ───────────── */
   function viewLobby() {
-    var st = S.store, f = S.form, demo = st.mode === 'demo', rooms = S.rooms;
+    if (!S.store) return viewGate();
+    var st = S.store, f = S.form, rooms = S.rooms;
     var list = rooms === null ? '<p class="hub-collab-muted">Đang tải…</p>'
       : !rooms.length ? '<p class="hub-collab-muted hub-collab-empty">Chưa có phòng nào. Tạo một phòng hoặc nhập mã mời của bạn bè.</p>'
       : '<ul class="hub-collab-roomlist">' + rooms.map(function (r) {
@@ -621,8 +695,7 @@ const collaborationModule = (function () {
     var create = S.tab === 'create';
     return '<header class="hub-collab-header"><div><h2 class="hub-collab-title">Collab Hub</h2>' +
         '<p class="hub-collab-subtitle">Giữ streak cùng nhau — mỗi người một cam kết, mỗi ngày một lần check-in.</p></div>' +
-        '<span class="hub-collab-mode ' + (demo ? 'is-demo' : 'is-cloud') + '">' + (demo ? 'Chế độ demo' : 'Cloud · ' + esc(st.name || 'đã đăng nhập')) + '</span></header>' +
-      (demo ? '<div class="hub-collab-banner" role="note">Bạn chưa đăng nhập nên đang ở <b>chế độ demo</b>: dữ liệu chỉ nằm trên máy này và có 2 bạn ảo tự check-in. Đăng nhập Google để tạo phòng thật cùng bạn bè.</div>' : '') +
+        '<span class="hub-collab-mode is-cloud is-live">Live · ' + esc(st.name || 'đã đăng nhập') + '</span></header>' +
       '<div class="hub-collab-lobby">' +
         '<section class="hub-collab-panel"><h3 class="hub-collab-h3">Phòng của bạn</h3>' + list + '</section>' +
         '<section class="hub-collab-panel"><div class="hub-collab-tabs" role="tablist">' +
@@ -724,7 +797,7 @@ const collaborationModule = (function () {
 
     var content = inArc
       ? viewArchive(room, c, members, me, nudgedBy)
-      : (pend.length ? reviewBanner(pend) : '') + groupHtml(g) + meHtml(mine, room, c, now) + alertsHtml(c, me) +
+      : (pend.length ? reviewBanner(pend) : '') + groupHtml(g) + (c.weekly && c.weekly.hasData ? weeklyRecapHtml(room, c, { inArchive: false }) : '') + meHtml(mine, room, c, now) + alertsHtml(c, me) +
         '<h3 class="hub-collab-h3 hub-collab-h3--gap">Cả phòng hôm nay</h3><div class="hub-collab-members">' +
           members.map(function (m) { return memberHtml(m, room, c, me, nudgedBy); }).join('') + '</div>' +
         '<div class="hub-collab-h3-row"><h3 class="hub-collab-h3 hub-collab-h3--gap">Nhật ký check-in</h3>' +
@@ -750,6 +823,88 @@ const collaborationModule = (function () {
         '<span class="hub-collab-muted">Kỷ lục ' + g.best + '</span></div>' +
       '<div class="hub-collab-group-today"><span>' + (g.total ? (g.all ? 'Cả phòng đã check-in hôm nay' : g.n + '/' + g.total + ' người đã check-in hôm nay') : 'Hôm nay không ai có lịch') + '</span>' +
         '<span class="hub-collab-meter" aria-hidden="true"><i style="width:' + pct + '%"></i></span></div></section>';
+  }
+  function weeklyCardText(room, w) {
+    var lines = ['[' + room.name + '] Tổng kết tuần ' + fmtDay(w.weekStart) + ' – ' + fmtDay(w.weekEnd) + '/' + w.weekEnd.slice(0, 4)];
+    var sumLine = 'Hoàn thành: ' + w.rate + '% (' + w.totDone + '/' + w.totDue + ' lượt) · Đồng bộ cả phòng: ' + w.syncDays + '/' + w.schedDays + ' ngày';
+    if (w.deltaPct !== null) sumLine += ' (' + (w.deltaPct > 0 ? '+' + w.deltaPct + '%' : w.deltaPct + '%') + ' so với tuần trước)';
+    lines.push(sumLine);
+    if (w.mostPunctual) lines.push('- Đúng giờ nhất: ' + w.mostPunctual.names + ' (' + w.mostPunctual.ok + '/' + w.mostPunctual.due + ' · ' + w.mostPunctual.ratePct + '%)');
+    if (w.streakHero) lines.push('- Kéo streak: ' + w.streakHero.names + ' (+' + w.streakHero.gain + ' ngày · chuỗi ' + w.streakHero.streak + (w.streakHero.perfect ? ', không lỡ ngày nào' : '') + ')');
+    if (w.weakestDay) {
+      lines.push(w.weakestDay.perfect
+        ? '- Nhịp cả phòng: Tuần hoàn hảo (0 ngày lỡ)'
+        : '- Ngày hay lỡ nhất: ' + w.weakestDay.dayName + ' ' + fmtDay(w.weakestDay.date) + ' (' + w.weakestDay.miss + '/' + w.weakestDay.due + ' người lỡ)');
+    }
+    return lines.join('\n');
+  }
+  function weeklyRecapHtml(room, c, opts) {
+    var inArc = !!(opts && opts.inArchive);
+    var w = (opts && opts.week) || (opts && opts.weekStart ? weeklySummary(room, c, opts.weekStart) : c.weekly);
+    if (!w || !w.hasData) return '';
+    var dCls = w.deltaPct == null ? '' : w.deltaPct > 0 ? 'is-up' : w.deltaPct < 0 ? 'is-down' : 'is-flat';
+    var expanded = inArc || isWeeklyOpen(room.id, w, c.today);
+    if (!expanded) {
+      var tea = [];
+      if (w.mostPunctual) tea.push('Đúng giờ: ' + esc(w.mostPunctual.names) + ' (' + w.mostPunctual.ratePct + '%)');
+      if (w.streakHero) tea.push('Kéo streak: ' + esc(w.streakHero.names) + ' (+' + w.streakHero.gain + ')');
+      if (w.weakestDay) tea.push(w.weakestDay.perfect ? 'Tuần hoàn hảo' : 'Lỡ nhiều: ' + w.weakestDay.dayName + ' (' + w.weakestDay.miss + ')');
+      return '<div class="hub-collab-wbar" role="region" aria-label="Tổng kết tuần vừa qua">' +
+        '<span class="hub-collab-wbar-ico" aria-hidden="true">✦</span>' +
+        '<div class="hub-collab-wbar-main">' +
+          '<span class="hub-collab-wbar-k">Tổng kết tuần <time>' + fmtDay(w.weekStart) + ' – ' + fmtDay(w.weekEnd) + '</time></span>' +
+          '<span class="hub-collab-wbadge">' + w.rate + '%</span>' +
+          (w.deltaPct !== null ? '<span class="hub-collab-wdelta ' + dCls + '">' + (w.deltaPct > 0 ? '+' + w.deltaPct + '%' : w.deltaPct + '%') + '</span>' : '') +
+          '<span class="hub-collab-wbar-tea">' + tea.join(' · ') + '</span>' +
+        '</div>' +
+        '<button type="button" class="hub-collab-btn" data-act="weekly-toggle" data-wstart="' + esc(w.weekStart) + '">Mở xem</button>' +
+      '</div>';
+    }
+    var deltaHtml = w.deltaPct === null ? ''
+      : '<span class="hub-collab-wdelta ' + dCls + '">' + (w.deltaPct > 0 ? '▲ +' + w.deltaPct + '% vs tuần trước' : w.deltaPct < 0 ? '▼ ' + w.deltaPct + '% vs tuần trước' : '● Bằng tuần trước') + '</span>';
+    var pVal = w.mostPunctual ? esc(w.mostPunctual.names) : 'Chưa có';
+    var pSub = w.mostPunctual
+      ? w.mostPunctual.ok + '/' + w.mostPunctual.due + ' ngày đúng giờ (' + w.mostPunctual.ratePct + '%)' + (w.mostPunctual.earlyMins >= 1 ? ' · sớm ~' + w.mostPunctual.earlyMins + 'p' : '')
+      : 'Chưa có lượt check-in đúng giờ';
+    var sVal = w.streakHero ? esc(w.streakHero.names) : 'Chưa có';
+    var sSub = w.streakHero
+      ? '+' + w.streakHero.gain + ' ngày hợp lệ · chuỗi ' + w.streakHero.streak + (w.streakHero.perfect ? ' · đủ 100%' : '') + (w.streakHero.newBest ? ' · ★ kỷ lục mới' : '')
+      : 'Chưa có lượt hoàn thành';
+    var weakCard = w.weakestDay && !w.weakestDay.perfect
+      ? '<button type="button" class="hub-collab-wcard is-weak" data-act="arc-day" data-day="' + esc(w.weakestDay.date) + '" title="Mở kho nhật ký ngày này">' +
+          '<span class="hub-collab-wcard-k">📉 Ngày hay lỡ nhất</span>' +
+          '<b class="hub-collab-wcard-v">' + esc(w.weakestDay.dayName) + ' · ' + fmtDay(w.weakestDay.date) + '</b>' +
+          '<span class="hub-collab-wcard-s">' + w.weakestDay.miss + '/' + w.weakestDay.due + ' người lỡ (' + w.weakestDay.missPct + '%) · Xem nhật ký ›</span></button>'
+      : '<div class="hub-collab-wcard is-perfect">' +
+          '<span class="hub-collab-wcard-k">✨ Nhịp cả phòng</span>' +
+          '<b class="hub-collab-wcard-v">Tuần hoàn hảo</b>' +
+          '<span class="hub-collab-wcard-s">' + (w.weakestDay && w.weakestDay.lateDay ? '0 ngày lỡ · ' + esc(w.weakestDay.lateDay.dayName) + ' có ' + w.weakestDay.lateDay.late + ' lượt muộn' : '0 ngày lỡ · giữ trọn 100% cam kết') + '</span></div>';
+    var daysHtml = '<div class="hub-collab-wdays" role="group" aria-label="Chi tiết 7 ngày trong tuần">' + w.days.map(function (ds) {
+      var isWeak = w.weakestDay && !w.weakestDay.perfect && ds.date === w.weakestDay.date;
+      var future = ds.date > c.today;
+      var tip = ds.dayName + ' ' + fmtDay(ds.date) + ': ' + (ds.due ? ds.done + '/' + ds.due + ' hoàn thành' + (ds.ok ? ', ' + ds.ok + ' đúng giờ' : '') + (ds.late + ds.vlate ? ', ' + (ds.late + ds.vlate) + ' muộn' : '') + (ds.miss ? ', ' + ds.miss + ' lỡ' : '') : 'không có lịch');
+      return '<button type="button" class="hub-collab-wday is-' + ds.status + (isWeak ? ' is-weakest' : '') + '" data-act="arc-day" data-day="' + esc(ds.date) + '"' + (future ? ' disabled' : '') + ' title="' + esc(tip) + '">' +
+        '<span>' + ds.dow + '</span><b>' + fmtDay(ds.date) + '</b><small>' + (ds.due ? ds.done + '/' + ds.due : '—') + '</small><i></i></button>';
+    }).join('') + '</div>';
+    var acts = '<button type="button" class="hub-collab-btn is-ghost" data-act="weekly-copy" data-wstart="' + esc(w.weekStart) + '" title="Chép tổng kết tuần">Copy</button>' +
+      (inArc ? '' : '<button type="button" class="hub-collab-btn is-ghost" data-act="weekly-arc" data-wstart="' + esc(w.weekStart) + '">Lịch sử</button><button type="button" class="hub-collab-btn" data-act="weekly-toggle" data-wstart="' + esc(w.weekStart) + '">Thu gọn</button>');
+    return '<section class="hub-collab-weekly" aria-label="Tổng kết tuần">' +
+      '<div class="hub-collab-weekly-head">' +
+        '<div class="hub-collab-weekly-title">' +
+          '<div class="hub-collab-weekly-krow"><span class="hub-collab-kicker">Tổng kết tuần · ' + fmtDay(w.weekStart) + ' – ' + fmtDay(w.weekEnd) + '/' + w.weekEnd.slice(0, 4) + '</span>' +
+            (!inArc && isMonday(c.today) ? '<span class="hub-collab-wnew">Mới · Thứ 2</span>' : '') + '</div>' +
+          '<div class="hub-collab-wkpis"><span class="hub-collab-wbadge">' + w.rate + '% <em>(' + w.totDone + '/' + w.totDue + ' lượt)</em></span>' + deltaHtml +
+            '<span class="hub-collab-wpill">' + w.syncDays + '/' + w.schedDays + ' ngày đồng bộ</span></div>' +
+        '</div>' +
+        '<div class="hub-collab-weekly-acts">' + acts + '</div>' +
+      '</div>' +
+      '<div class="hub-collab-wgrid">' +
+        '<div class="hub-collab-wcard is-punctual"><span class="hub-collab-wcard-k">⏱ Đúng giờ nhất</span><b class="hub-collab-wcard-v">' + pVal + '</b><span class="hub-collab-wcard-s">' + pSub + '</span></div>' +
+        '<div class="hub-collab-wcard is-streak"><span class="hub-collab-wcard-k">🔥 Kéo streak</span><b class="hub-collab-wcard-v">' + sVal + '</b><span class="hub-collab-wcard-s">' + sSub + '</span></div>' +
+        weakCard +
+      '</div>' +
+      daysHtml +
+    '</section>';
   }
   function meHtml(mine, room, c, now) {
     var st = c.states[mine.uid], cm = curCommit(mine, c.today), cfg = room.cfg, ci = (room.checkins[mine.uid] || {})[c.today], it = c.by[mine.uid + '|' + c.today], body;
@@ -1085,24 +1240,56 @@ const collaborationModule = (function () {
         '</div>';
       }).join('') + '</div>';
   }
+  function arcWeeklyHtml(room, c, w) {
+    if (!w.hasData) return '<p class="hub-collab-muted hub-collab-feed-empty">Chưa có dữ liệu check-in nào trong tuần ' + fmtDay(w.weekStart) + ' – ' + fmtDay(w.weekEnd) + '.</p>';
+    var rows = w.rows.filter(function (pm) { return pm.due > 0 || pm.done > 0; });
+    var list = rows.length
+      ? '<h4 class="hub-collab-h4">Chi tiết thành viên trong tuần</h4><div class="hub-collab-maudit">' + rows.map(function (pm) {
+          var r = pm.due ? Math.round(pm.done / pm.due * 100) : 0;
+          return '<div class="hub-collab-maudit-row">' +
+            '<div class="hub-collab-maudit-top"><div class="hub-collab-maudit-who"><div class="hub-collab-avatar is-sm" aria-hidden="true" data-i="' + esc((pm.m.name || '?').charAt(0).toUpperCase()) + '">' + esc((pm.m.name || '?').charAt(0).toUpperCase()) + '</div>' +
+              '<div><b>' + esc(pm.m.name) + '</b><span class="hub-collab-muted">chuỗi ' + pm.streakEnd + ' · ' + pm.done + '/' + pm.due + ' ngày (' + r + '%)</span></div></div>' +
+              '<div class="hub-collab-arc-pills">' +
+                '<span class="hub-collab-apill is-done">✓ ' + pm.ok + '</span>' +
+                '<span class="hub-collab-apill is-late">▲ ' + pm.late + '</span>' +
+                '<span class="hub-collab-apill is-vlate">‼ ' + pm.vlate + '</span>' +
+                '<span class="hub-collab-apill is-miss">✕ ' + pm.miss + '</span>' +
+              '</div></div>' +
+            stripHtml(pm.log, { padTo: 0, click: true }) +
+          '</div>';
+        }).join('') + '</div>'
+      : '';
+    return weeklyRecapHtml(room, c, { inArchive: true, week: w }) + list;
+  }
   function viewArchive(room, c, members, me, nudgedBy) {
-    var arc = arcState(c.today), curM = monthKey(c.today), nextDis = arc.month >= curM;
+    var arc = arcState(c.today), curM = monthKey(c.today), nextDis = arc.month >= curM, wMode = arc.mode === 'weekly';
     var hasFilter = arc.member !== 'all' || arc.status !== 'all' || !!(arc.q || '').trim();
-    var bar = '<div class="hub-collab-arc-bar">' +
-        '<div class="hub-collab-arc-modes" role="group" aria-label="Chế độ xem kho nhật ký">' +
-          '<button type="button" class="hub-collab-btn" data-act="arc-mode" data-amode="day" aria-pressed="' + (arc.mode === 'day') + '">Theo ngày</button>' +
-          '<button type="button" class="hub-collab-btn" data-act="arc-mode" data-amode="gallery" aria-pressed="' + (arc.mode === 'gallery') + '">Thư viện ảnh</button>' +
-          '<button type="button" class="hub-collab-btn" data-act="arc-mode" data-amode="month" aria-pressed="' + (arc.mode === 'month') + '">Tổng quan tháng</button>' +
-        '</div>' +
-        '<div class="hub-collab-arc-mnav">' +
+    var w = wMode ? weeklySummary(room, c, arc.week) : null;
+    if (w && arc.week !== w.weekStart) arc.week = w.weekStart;
+    var rightNav = wMode
+      ? '<div class="hub-collab-arc-mnav">' +
+          '<button type="button" class="hub-collab-btn" data-act="arc-week" data-dir="-1" aria-label="Tuần trước"' + (!w.canPrev ? ' disabled' : '') + '>◀</button>' +
+          '<b>Tuần ' + fmtDay(w.weekStart) + ' – ' + fmtDay(w.weekEnd) + '</b>' +
+          '<button type="button" class="hub-collab-btn" data-act="arc-week" data-dir="1" aria-label="Tuần sau"' + (!w.canNext ? ' disabled' : '') + '>▶</button>' +
+          '<button type="button" class="hub-collab-btn" data-act="arc-week-latest">Tuần vừa qua</button>' +
+          '<button type="button" class="hub-collab-btn" data-act="weekly-copy" data-wstart="' + esc(w.weekStart) + '" title="Chép tổng kết tuần">Copy tổng kết</button>' +
+        '</div>'
+      : '<div class="hub-collab-arc-mnav">' +
           '<button type="button" class="hub-collab-btn" data-act="arc-month" data-dir="-1" aria-label="Tháng trước">◀</button>' +
           '<b>' + esc(fmtMonthLabel(arc.month)) + '</b>' +
           '<button type="button" class="hub-collab-btn" data-act="arc-month" data-dir="1" aria-label="Tháng sau"' + (nextDis ? ' disabled' : '') + '>▶</button>' +
           '<button type="button" class="hub-collab-btn" data-act="arc-today">Hôm nay</button>' +
           '<button type="button" class="hub-collab-btn" data-act="arc-copy" title="Chép báo cáo điểm danh">Copy báo cáo</button>' +
-        '</div></div>';
+        '</div>';
+    var bar = '<div class="hub-collab-arc-bar">' +
+        '<div class="hub-collab-arc-modes" role="group" aria-label="Chế độ xem kho nhật ký">' +
+          '<button type="button" class="hub-collab-btn" data-act="arc-mode" data-amode="day" aria-pressed="' + (arc.mode === 'day') + '">Theo ngày</button>' +
+          '<button type="button" class="hub-collab-btn" data-act="arc-mode" data-amode="gallery" aria-pressed="' + (arc.mode === 'gallery') + '">Thư viện ảnh</button>' +
+          '<button type="button" class="hub-collab-btn" data-act="arc-mode" data-amode="month" aria-pressed="' + (arc.mode === 'month') + '">Tổng quan tháng</button>' +
+          '<button type="button" class="hub-collab-btn" data-act="arc-mode" data-amode="weekly" aria-pressed="' + wMode + '">Tổng kết tuần</button>' +
+        '</div>' + rightNav + '</div>';
 
-    var filters = arc.mode === 'month' ? '<div class="hub-collab-arc-filters">' +
+    var filters = wMode ? '' : arc.mode === 'month' ? '<div class="hub-collab-arc-filters">' +
         '<select class="hub-collab-input" data-arc="member" aria-label="Lọc theo thành viên"><option value="all">Tất cả thành viên</option>' +
           members.map(function (m) { return '<option value="' + esc(m.uid) + '"' + (arc.member === m.uid ? ' selected' : '') + '>' + esc(m.name) + '</option>'; }).join('') +
         '</select></div>'
@@ -1122,13 +1309,15 @@ const collaborationModule = (function () {
         (hasFilter ? '<button type="button" class="hub-collab-btn is-ghost" data-act="arc-reset">Xoá lọc</button>' : '') +
       '</div>';
 
-    var body = arc.mode === 'gallery'
-      ? arcGalleryHtml(room, c, members, arc)
-      : arc.mode === 'month'
-        ? arcMonthHtml(room, c, members, arc)
-        : arcDayHtml(room, c, members, arc, me, nudgedBy);
+    var body = wMode
+      ? arcWeeklyHtml(room, c, w)
+      : arc.mode === 'gallery'
+        ? arcGalleryHtml(room, c, members, arc)
+        : arc.mode === 'month'
+          ? arcMonthHtml(room, c, members, arc)
+          : arcDayHtml(room, c, members, arc, me, nudgedBy);
 
-    return '<section class="hub-collab-arc">' + bar + (arc.mode !== 'month' ? arcCalendarHtml(room, c, arc) : '') + filters + body + '</section>';
+    return '<section class="hub-collab-arc">' + bar + (!wMode && arc.mode !== 'month' ? arcCalendarHtml(room, c, arc) : '') + filters + body + '</section>';
   }
   function dialogHtml(room, mine, isOwner, today) {
     var f = S.dlgForm, cfg = room.cfg;
@@ -1225,9 +1414,23 @@ const collaborationModule = (function () {
       '<img alt="" data-ph="' + esc(uid) + '|' + esc(date) + '">' + (b ? '<i class="hub-collab-thumb-badge is-' + b.k + '" aria-hidden="true">' + b.g + '</i>' : '') + '</button>';
   }
   function cameraHtml(room) {
-    var c = S.cam, body, acts, chal = '', warn = '', info = c.ch ? chInfo(c.ch) : null;
-    if (info && !c.shot) chal = '<div class="hub-collab-chal" role="note"><b class="hub-collab-chal-num" aria-label="Mã thử thách ' + esc(info.num) + '">' + esc(info.num) + '<small>' + (info.kind === 'paper' ? 'viết lên giấy' : 'ngón tay') + '</small></b>' +
-      '<p class="hub-collab-muted"><b>Mã thử thách.</b> ' + esc(info.how) + ' Số này sẽ được đóng dấu lên ảnh để cả phòng đối chiếu.</p></div>';
+    var c = S.cam, body, acts, actsCls = '', chal = '', warn = '', info = c.ch ? chInfo(c.ch) : null, hud = '';
+    if (info && !c.shot) {
+      var rem = c.chExp ? Math.max(0, c.chExp - Date.now()) : CHAL_MS;
+      var pct = Math.max(0, Math.min(100, Math.round(rem / CHAL_MS * 100)));
+      var swLbl = info.kind === 'paper' ? '↻ Đổi sang giơ ngón tay' : '↻ Đổi sang viết giấy';
+      chal = '<div class="hub-collab-chal" role="note">' +
+        '<div class="hub-collab-chal-top">' +
+          '<b class="hub-collab-chal-num" aria-label="Mã thử thách ' + esc(info.num) + '">' + esc(info.num) + '<small>' + esc(info.short) + '</small></b>' +
+          '<div class="hub-collab-chal-body">' +
+            '<div class="hub-collab-chal-head"><span class="hub-collab-chal-k">' + esc(info.icon) + ' Mã thử thách</span>' +
+              '<span class="hub-collab-chal-timer' + (rem <= 20000 ? ' is-low' : '') + '" data-hc-chleft>' + fmtClockSec(rem) + '</span>' +
+              '<button type="button" class="hub-collab-btn is-ghost hub-collab-chal-sw" data-act="ch-switch">' + swLbl + '</button></div>' +
+            '<p class="hub-collab-muted">' + esc(info.how) + ' Tem gọn được đóng ở góc trên trái ảnh.</p>' +
+          '</div>' +
+        '</div>' +
+        '<span class="hub-collab-chal-track" aria-hidden="true"><i data-hc-chbar style="width:' + pct + '%"></i></span></div>';
+    }
     if (c.shot) {
       if (c.dup) {
         var o = room.members.filter(function (m) { return m.uid === c.dup.uid; })[0];
@@ -1242,14 +1445,17 @@ const collaborationModule = (function () {
       acts = '<div class="hub-collab-camacts"><label class="hub-collab-btn is-primary">Mở camera của máy<input type="file" accept="image/*" capture="environment" id="hc-file" hidden></label>' +
         '<button type="button" class="hub-collab-btn" data-act="flip">Thử lại</button></div>';
     } else {
-      body = '<video id="hc-video" playsinline autoplay muted></video>';
-      acts = '<div class="hub-collab-camacts"><button type="button" class="hub-collab-btn" data-act="flip">Đổi camera</button>' +
+      if (info) hud = '<div class="hub-collab-camhud" aria-hidden="true"><span>' + esc(info.icon) + '</span><b>' + esc(info.hud) + '</b></div>';
+      body = '<video id="hc-video" playsinline autoplay muted></video>' + hud + '<div class="hub-collab-cd" id="hc-cd" aria-live="assertive" hidden></div>';
+      actsCls = ' is-live';
+      acts = '<div class="hub-collab-camacts' + actsCls + '"><button type="button" class="hub-collab-btn" data-act="flip">Đổi camera</button>' +
+        '<button type="button" class="hub-collab-btn hub-collab-timerbtn" data-act="timer3s" aria-pressed="' + (!!c.timer3s) + '" title="Hẹn giờ chụp 3 giây">⏱ 3s</button>' +
         '<button type="button" class="hub-collab-btn is-primary hub-collab-shoot" data-act="shoot">Chụp</button></div>';
     }
     return '<div class="hub-collab-scrim" data-act="close"></div><div class="hub-collab-dialog hub-collab-dialog--cam" role="dialog" aria-modal="true" aria-labelledby="hc-dlg-title">' +
       '<div class="hub-collab-dialog-head"><h3 id="hc-dlg-title">Ảnh check-in</h3><button type="button" class="hub-collab-btn is-ghost" data-act="close" aria-label="Đóng">✕</button></div>' +
-      chal + '<div class="hub-collab-cam' + (c.facing === 'user' && !c.shot ? ' is-mirror' : '') + '">' + body + '</div>' + warn + acts +
-      '<p class="hub-collab-muted">Ảnh được đóng dấu giờ + tên' + (info ? ' + mã thử thách' : '') + ', nén nhỏ, và cả phòng xem được. Chỉ chụp trực tiếp, không chọn ảnh có sẵn. Thành viên khác sẽ duyệt: quá nửa nghi ngờ thì check-in bị hủy.</p></div>';
+      chal + '<div class="hub-collab-cam' + (c.shot ? ' is-photo' : (c.facing === 'user' ? ' is-mirror' : '')) + '">' + body + '</div>' + warn + acts +
+      '<p class="hub-collab-muted">Ảnh giữ nguyên khung hình, đóng dấu giờ + tên' + (info ? ' + tem thử thách' : '') + '. Chỉ chụp trực tiếp, thành viên khác sẽ duyệt trong 72 giờ.</p></div>';
   }
   function photoHtml(room, c, me) {
     var v = S.photoView, it = v && c.by[v.uid + '|' + v.date], ci = v && room.checkins[v.uid] && room.checkins[v.uid][v.date], own = !!v && v.uid === me, now = Date.now(), x = '';
@@ -1274,8 +1480,15 @@ const collaborationModule = (function () {
     '</div>';
     if (it) {
       var j = it.j, info = chInfo(it.ch);
-      if (info) x += '<p class="hub-collab-chalnote"><b>Mã thử thách ' + esc(info.num) + (info.kind === 'fingers' ? ' ngón' : '') + '</b> — ' + esc(info.check) + '.</p>';
-      else if (room.cfg.challenge && j.open) x += '<p class="hub-collab-muted">Check-in này không kèm mã thử thách.</p>';
+      if (info) {
+        x += '<div class="hub-collab-chverify">' +
+          '<span class="hub-collab-chverify-code"><i aria-hidden="true">' + esc(info.icon) + '</i><b>' + esc(info.badge) + '</b><small>' + esc(info.short) + '</small></span>' +
+          '<div class="hub-collab-chverify-txt"><b>Đối chiếu mã thử thách</b><span>' + esc(info.check.charAt(0).toUpperCase() + info.check.slice(1)) + ' — khớp với tem góc trên trái ảnh.</span></div></div>';
+      } else if (room.cfg.challenge && j.open) {
+        x += '<div class="hub-collab-chverify is-missing" role="note">' +
+          '<span class="hub-collab-chverify-code"><b>!</b><small>thiếu mã</small></span>' +
+          '<div class="hub-collab-chverify-txt"><b>Không kèm mã thử thách</b><span>Phòng đang bật thử thách nhưng ảnh này không có mã đối chiếu.</span></div></div>';
+      }
       if (it.dup) x += dupHtml(room, it, me);
       x += tallyHtml(room, it, me, now);
       if (!own && j.open && j.n) {
@@ -1288,15 +1501,15 @@ const collaborationModule = (function () {
     return '<div class="hub-collab-scrim" data-act="close"></div><div class="hub-collab-dialog hub-collab-dialog--photo" role="dialog" aria-modal="true" aria-labelledby="hc-dlg-title">' +
       '<div class="hub-collab-dialog-head"><h3 id="hc-dlg-title">' + esc(v ? v.name : '') + (ci ? ' · ' + fmtTime(ci.at) + ' · ' + fmtDay(v.date) : '') + '</h3><button type="button" class="hub-collab-btn is-ghost" data-act="close" aria-label="Đóng">✕</button></div>' +
       metaHtml +
-      '<div class="hub-collab-cam"><img class="hub-collab-shot' + (voided ? ' is-void' : '') + '" alt="Ảnh check-in" data-ph="' + esc(v ? v.uid : '') + '|' + esc(v ? v.date : '') + '"></div>' +
+      '<div class="hub-collab-cam is-photo"><img class="hub-collab-shot' + (voided ? ' is-void' : '') + '" alt="Ảnh check-in" data-ph="' + esc(v ? v.uid : '') + '|' + esc(v ? v.date : '') + '"></div>' +
       (ci && ci.note ? '<p class="hub-collab-muted">“' + esc(ci.note) + '”</p>' : '') +
       x + navHtml + '</div>';
   }
 
   /* ───────────── điều khiển ───────────── */
   function pickStore() {
-    try { if (typeof firebase !== 'undefined' && firebase.apps && firebase.apps.length && firebase.auth().currentUser) return CloudStore(); } catch (e) {}
-    return DemoStore();
+    try { if (hasFirebase() && firebase.auth().currentUser) return CloudStore(); } catch (e) {}
+    return null;                                   // chưa đăng nhập → hiện cổng đăng nhập
   }
   function nowDay() { return dayKey(Date.now(), DEFAULT_CFG.cutoff); }
   function focusKey(el) {                                              // nhận diện phần tử đang focus để trả focus lại sau khi vẽ lại (bấm Hợp lệ → giao diện render lại)
@@ -1323,7 +1536,7 @@ const collaborationModule = (function () {
       if (dl && !dl.contains(document.activeElement)) { dl.setAttribute('tabindex', '-1'); dl.focus({ preventScroll: true }); }   // để Esc luôn đóng được hộp thoại
     }
     hydratePhotos();
-    if (S.dlg === 'camera') attachCamera();
+    if (S.dlg === 'camera') { attachCamera(); if (S.cam && S.cam.ch && !S.cam.shot && !S.cam.chT) startChalTimer(); }
     emitStatus();
   }
   /** Báo trạng thái phòng cho thanh trên cùng của trang (streak rail trong index.html). Không có người nghe thì vô hại. */
@@ -1366,7 +1579,10 @@ const collaborationModule = (function () {
   }
   function init() {
     if (S.unwatch) { S.unwatch(); S.unwatch = null; }
-    S.store = pickStore(); S.view = 'lobby'; S.room = null; S.dlg = ''; loadRooms();
+    stopCamera(); S.cam = null;
+    S.store = pickStore(); S.view = 'lobby'; S.room = null; S.calc = null; S.dlg = ''; S.rooms = null;
+    if (!S.store) { S.rooms = []; paint(); return; }
+    loadRooms();
   }
   function tick() {
     if (!S || !S.root) return;
@@ -1402,7 +1618,35 @@ const collaborationModule = (function () {
   function mineNow() { return S.room && S.room.members.filter(function (m) { return m.uid === S.store.uid; })[0]; }
 
   /* ───────────── camera + ảnh ───────────── */
-  function stopCamera() { if (S && S.cam && S.cam.stream) { S.cam.stream.getTracks().forEach(function (t) { t.stop(); }); S.cam.stream = null; } }
+  function stopCamTimers() {
+    if (!S || !S.cam) return;
+    if (S.cam.cdT) { clearInterval(S.cam.cdT); S.cam.cdT = null; }
+    if (S.cam.chT) { clearInterval(S.cam.chT); S.cam.chT = null; }
+    S.cam.cd = 0;
+  }
+  function stopCamera() { stopCamTimers(); if (S && S.cam && S.cam.stream) { S.cam.stream.getTracks().forEach(function (t) { t.stop(); }); S.cam.stream = null; } }
+  function startChalTimer() {
+    if (!S || !S.cam || !S.cam.ch || S.cam.shot) return;
+    if (S.cam.chT) { clearInterval(S.cam.chT); S.cam.chT = null; }
+    S.cam.chT = setInterval(function () {
+      if (!S || !S.cam || S.cam.shot || S.dlg !== 'camera') { if (S && S.cam && S.cam.chT) { clearInterval(S.cam.chT); S.cam.chT = null; } return; }
+      var rem = Math.max(0, (S.cam.chExp || 0) - Date.now());
+      var tEl = S.root && S.root.querySelector('[data-hc-chleft]');
+      var bEl = S.root && S.root.querySelector('[data-hc-chbar]');
+      if (tEl) { tEl.textContent = fmtClockSec(rem); tEl.classList.toggle('is-low', rem <= 20000); }
+      if (bEl) bEl.style.width = (rem / CHAL_MS * 100).toFixed(1) + '%';
+      if (rem <= 0 && !S.cam.cd) {
+        S.cam.ch = newChallenge(); S.cam.chExp = Date.now() + CHAL_MS;
+        paint(); toast('Mã thử thách đã làm mới.');
+      }
+    }, 500);
+  }
+  function captureNow() {
+    var v = S && S.root && S.root.querySelector('#hc-video');
+    if (!v || !v.videoWidth) { toast('Camera chưa sẵn sàng, đợi một chút nhé.'); return false; }
+    setShot(stampAndEncode(v, v.videoWidth, v.videoHeight, S.cam.ch)); stopCamera(); paint();
+    return true;
+  }
   function startCamera() {
     var c = S.cam; if (!c) return;
     stopCamera(); c.err = '';
@@ -1440,36 +1684,84 @@ const collaborationModule = (function () {
       return { ph: bits(false), pm: bits(true) };
     } catch (e) { return { ph: '', pm: '' }; }
   }
-  /** Vẽ khung hình lên canvas ≤720px, băm vân tay, đóng dấu giờ + ngày + tên (+ mã thử thách), nén JPEG cho vừa một tài liệu Firestore (≲ 220KB). */
+  function roundRectPath(ctx, rx, ry, rw, rh, rad) {
+    var r = Math.min(rad, rw / 2, rh / 2);
+    ctx.beginPath();
+    ctx.moveTo(rx + r, ry);
+    ctx.lineTo(rx + rw - r, ry);
+    ctx.quadraticCurveTo(rx + rw, ry, rx + rw, ry + r);
+    ctx.lineTo(rx + rw, ry + rh - r);
+    ctx.quadraticCurveTo(rx + rw, ry + rh, rx + rw - r, ry + rh);
+    ctx.lineTo(rx + r, ry + rh);
+    ctx.quadraticCurveTo(rx, ry + rh, rx, ry + rh - r);
+    ctx.lineTo(rx, ry + r);
+    ctx.quadraticCurveTo(rx, ry, rx + r, ry);
+    ctx.closePath();
+  }
+  /** Vẽ khung hình lên canvas ≤720px, băm vân tay, đóng dấu giờ + ngày + tên (+ tem thử thách gọn chuẩn safe-area), nén JPEG cho vừa Firestore (≲ 220KB). */
   function stampAndEncode(src, w, h, chId) {
     var k = Math.min(1, 720 / Math.max(w, h)), cw = Math.round(w * k), ch = Math.round(h * k);
     var cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
     var x = cv.getContext('2d'); x.drawImage(src, 0, 0, cw, ch);
     var hp = hashPair(cv);                                              // băm TRƯỚC khi đóng dấu → dấu giờ / mã không làm lệch vân tay
-    var m = mineNow(), d = new Date(), nowMs = d.getTime(), fs = Math.max(12, Math.round(cw / 34));
+    var base = Math.min(cw, ch), padX = Math.max(10, Math.round(cw * 0.032)), padY = Math.max(10, Math.round(ch * 0.032));
+    var m = mineNow(), d = new Date(), nowMs = d.getTime(), fs = Math.max(10, Math.min(15, Math.round(base * 0.034)));
     var cm = m && S.room && S.calc ? curCommit(m, S.calc.today) : null;
     var li = cm && S.room ? lateInfo({ at: nowMs, late: false }, cm, S.calc.today, S.room.cfg.cutoff) : null;
     var tag = cm && cm.target && li
       ? (li.tier === 'vlate' ? '‼ ' + li.label.toUpperCase() : li.tier === 'late' ? '▲ ' + li.label.toUpperCase() : '✓ ĐÚNG GIỜ')
       : '';
     var label = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ' · ' + pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear() + ' · ' + (m ? m.name : '');
+    var padInX = Math.max(8, Math.round(fs * 0.72)), padInY = Math.max(5, Math.round(fs * 0.42)), maxBarW = cw - padX * 2;
     x.font = '600 ' + fs + 'px ui-monospace, Menlo, Consolas, monospace';
     var tw = x.measureText(label).width, tagW = tag ? x.measureText('  ' + tag).width : 0;
-    if (tw + tagW + fs * 1.4 > cw) { fs = Math.max(10, Math.floor(fs * (cw - fs * 1.4) / (tw + tagW))); x.font = '600 ' + fs + 'px ui-monospace, Menlo, Consolas, monospace'; tw = x.measureText(label).width; tagW = tag ? x.measureText('  ' + tag).width : 0; }
-    var bx = Math.round(fs * 0.6), by = ch - Math.round(fs * 2.1);
-    x.fillStyle = 'rgba(0,0,0,0.62)'; x.fillRect(bx, by, tw + tagW + fs, Math.round(fs * 1.6));
-    x.fillStyle = '#fff'; x.textBaseline = 'middle'; x.fillText(label, bx + fs / 2, by + Math.round(fs * 0.8));
+    if (tw + tagW + padInX * 2 > maxBarW) {
+      fs = Math.max(9, Math.floor(fs * (maxBarW - padInX * 2) / Math.max(1, tw + tagW)));
+      padInX = Math.max(7, Math.round(fs * 0.72)); padInY = Math.max(4, Math.round(fs * 0.42));
+      x.font = '600 ' + fs + 'px ui-monospace, Menlo, Consolas, monospace';
+      tw = x.measureText(label).width; tagW = tag ? x.measureText('  ' + tag).width : 0;
+    }
+    var barW = Math.min(maxBarW, Math.ceil(tw + tagW + padInX * 2)), barH = fs + padInY * 2;
+    var bx = padX, by = ch - padY - barH;
+    roundRectPath(x, bx, by, barW, barH, Math.min(7, barH / 3));
+    x.fillStyle = 'rgba(8, 12, 20, 0.74)'; x.fill();
+    x.lineWidth = 1; x.strokeStyle = 'rgba(255, 255, 255, 0.16)'; x.stroke();
+    x.fillStyle = '#fff'; x.textBaseline = 'middle';
+    x.fillText(label, bx + padInX, by + barH / 2);
     if (tag) {
       x.fillStyle = li.tier === 'vlate' ? '#ff4d6d' : li.tier === 'late' ? '#ffb347' : '#2ee59d';
-      x.fillText('  ' + tag, bx + fs / 2 + tw, by + Math.round(fs * 0.8));
+      x.fillText('  ' + tag, bx + padInX + tw, by + barH / 2);
     }
     var info = chInfo(chId);
-    if (info) {                                                        // mã thử thách: ô vàng lớn ở góc trên trái, khó che / cắt
-      var f2 = Math.max(18, Math.round(cw / 13)), p2 = Math.round(f2 * 0.4);
-      x.font = '800 ' + f2 + 'px ui-monospace, Menlo, Consolas, monospace';
-      var w2 = x.measureText(info.stamp).width;
-      x.fillStyle = 'rgba(0,0,0,0.78)'; x.fillRect(p2, p2, w2 + p2 * 2, f2 + p2 * 1.6);
-      x.fillStyle = '#ffd84d'; x.textBaseline = 'top'; x.fillText(info.stamp, p2 * 2, p2 + p2 * 0.8);
+    if (info) {                                                        // tem thử thách gọn sắc nét ở góc trên trái (luôn nằm trọn trong safe-area)
+      var fsSub = Math.max(8, Math.min(10, Math.round(base * 0.022))), fsMain = Math.max(15, Math.min(22, Math.round(base * 0.048)));
+      var accW = 4, bPadX = Math.max(9, Math.round(fsMain * 0.52)), bPadY = Math.max(6, Math.round(fsMain * 0.34)), lineGap = Math.max(2, Math.round(fsMain * 0.14));
+      x.font = '700 ' + fsSub + 'px ui-monospace, Menlo, Consolas, monospace';
+      var subW = x.measureText('THỬ THÁCH').width;
+      x.font = '800 ' + fsMain + 'px ui-monospace, Menlo, Consolas, monospace';
+      var mainW = x.measureText(info.badge).width;
+      var innerW = accW + bPadX * 2 + Math.max(subW, mainW);
+      if (innerW > maxBarW) {
+        var sc = (maxBarW - accW - bPadX * 2) / Math.max(1, Math.max(subW, mainW));
+        fsMain = Math.max(12, Math.floor(fsMain * sc)); fsSub = Math.max(7, Math.floor(fsSub * sc));
+        x.font = '700 ' + fsSub + 'px ui-monospace, Menlo, Consolas, monospace'; subW = x.measureText('THỬ THÁCH').width;
+        x.font = '800 ' + fsMain + 'px ui-monospace, Menlo, Consolas, monospace'; mainW = x.measureText(info.badge).width;
+        innerW = Math.min(maxBarW, accW + bPadX * 2 + Math.ceil(Math.max(subW, mainW)));
+      }
+      var boxW = Math.ceil(innerW), boxH = bPadY * 2 + fsSub + lineGap + fsMain;
+      roundRectPath(x, padX, padY, boxW, boxH, 7);
+      x.fillStyle = 'rgba(8, 12, 20, 0.80)'; x.fill();
+      x.lineWidth = 1.2; x.strokeStyle = 'rgba(255, 216, 77, 0.72)'; x.stroke();
+      x.save();
+      roundRectPath(x, padX, padY, boxW, boxH, 7);
+      x.clip();
+      x.fillStyle = '#ffd84d'; x.fillRect(padX, padY, accW, boxH);
+      x.restore();
+      x.textBaseline = 'top';
+      x.font = '700 ' + fsSub + 'px ui-monospace, Menlo, Consolas, monospace';
+      x.fillStyle = 'rgba(255, 216, 77, 0.85)'; x.fillText('THỬ THÁCH', padX + accW + bPadX * 0.8, padY + bPadY);
+      x.font = '800 ' + fsMain + 'px ui-monospace, Menlo, Consolas, monospace';
+      x.fillStyle = '#ffd84d'; x.fillText(info.badge, padX + accW + bPadX * 0.8, padY + bPadY + fsSub + lineGap);
       x.textBaseline = 'middle';
     }
     var q = 0.72, url = cv.toDataURL('image/jpeg', q);
@@ -1480,7 +1772,8 @@ const collaborationModule = (function () {
     }
     return { url: url, ph: hp.ph, pm: hp.pm };
   }
-  function setShot(r) {                                                // ảnh vừa chụp → xem trước + kiểm tra trùng NGAY, trước khi gửi
+  function setShot(r) {                                                // ảnh vừa chụp → dừng đồng hồ + kiểm tra trùng NGAY, trước khi gửi
+    stopCamTimers();
     S.cam.shot = r.url; S.cam.ph = r.ph; S.cam.pm = r.pm; S.cam.err = '';
     S.cam.dup = S.room ? dupAgainst(S.room, r.ph, r.pm) : null;
   }
@@ -1509,6 +1802,15 @@ const collaborationModule = (function () {
   }
 
   var ACTIONS = {
+    signin: function () {
+      if (!hasFirebase()) { toast('Chưa kết nối được Firebase.'); return; }
+      S.busy = true; paint();
+      var done = function (e) {
+        if (!S) return; S.busy = false; paint();
+        if (e && e.code !== 'auth/popup-closed-by-user' && e.code !== 'auth/cancelled-popup-request') toast((e && e.message) || 'Không đăng nhập được, thử lại nhé.');
+      };
+      try { firebase.auth().signInWithPopup(new firebase.auth.GoogleAuthProvider()).then(function () { done(); }, done); } catch (e) { done(e); }
+    },
     tab: function (el) { S.tab = el.getAttribute('data-tab') === 'join' ? 'join' : 'create'; paint(); },
     open: function (el) { openRoom(el.getAttribute('data-id')); },
     back: function () { closeRoom(); },
@@ -1531,14 +1833,54 @@ const collaborationModule = (function () {
       if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(code).then(done, function () { window.prompt('Chép mã mời:', code); });
       else window.prompt('Chép mã mời:', code);
     },
-    cam: function () { S.cam = { facing: 'environment', shot: '', err: '', note: '', stream: null, sending: false, ch: S.room.cfg.challenge ? newChallenge() : '', ph: '', pm: '', dup: null }; S.dlg = 'camera'; paint(); startCamera(); },
-    flip: function () { var c = S.cam; if (!c) return; if (!c.err) c.facing = c.facing === 'user' ? 'environment' : 'user'; c.shot = ''; c.err = ''; paint(); startCamera(); },
-    shoot: function () {
-      var v = S.root.querySelector('#hc-video');
-      if (!v || !v.videoWidth) { toast('Camera chưa sẵn sàng, đợi một chút nhé.'); return; }
-      setShot(stampAndEncode(v, v.videoWidth, v.videoHeight, S.cam.ch)); stopCamera(); paint();
+    cam: function () {
+      var on = !!S.room.cfg.challenge;
+      S.cam = { facing: 'environment', shot: '', err: '', note: '', stream: null, sending: false, ch: on ? newChallenge() : '', chExp: on ? Date.now() + CHAL_MS : 0, timer3s: false, cd: 0, cdT: null, chT: null, ph: '', pm: '', dup: null };
+      S.dlg = 'camera'; paint(); startCamera();
     },
-    retake: function () { S.cam.shot = ''; S.cam.dup = null; if (S.room.cfg.challenge) S.cam.ch = newChallenge(); paint(); startCamera(); },       // chụp lại = mã mới
+    flip: function () { var c = S.cam; if (!c) return; stopCamTimers(); if (!c.err) c.facing = c.facing === 'user' ? 'environment' : 'user'; c.shot = ''; c.err = ''; paint(); startCamera(); },
+    timer3s: function (el) {
+      if (!S.cam || S.cam.cd) return;
+      S.cam.timer3s = !S.cam.timer3s;
+      el.setAttribute('aria-pressed', String(S.cam.timer3s));
+      toast(S.cam.timer3s ? 'Đã bật hẹn giờ chụp 3 giây.' : 'Đã tắt hẹn giờ chụp 3 giây.');
+    },
+    'ch-switch': function () {
+      var c = S.cam; if (!c || c.shot || !c.ch || c.cd) return;
+      var cur = chInfo(c.ch);
+      c.ch = newChallenge(cur && cur.kind === 'paper' ? 'fingers' : 'paper');
+      c.chExp = Date.now() + CHAL_MS;
+      paint();
+    },
+    shoot: function (el) {
+      var c = S.cam; if (!c) return;
+      if (c.cd > 0) {
+        if (c.cdT) { clearInterval(c.cdT); c.cdT = null; }
+        c.cd = 0;
+        var ov0 = S.root && S.root.querySelector('#hc-cd'); if (ov0) { ov0.hidden = true; ov0.textContent = ''; }
+        if (el) el.textContent = 'Chụp';
+        return;
+      }
+      if (!c.timer3s) { captureNow(); return; }
+      var v = S.root && S.root.querySelector('#hc-video');
+      if (!v || !v.videoWidth) { toast('Camera chưa sẵn sàng, đợi một chút nhé.'); return; }
+      c.cd = 3;
+      var ov = S.root && S.root.querySelector('#hc-cd');
+      if (ov) { ov.textContent = '3'; ov.hidden = false; }
+      if (el) el.textContent = 'Huỷ (3)';
+      c.cdT = setInterval(function () {
+        if (!S || !S.cam || S.dlg !== 'camera' || S.cam.shot) { stopCamTimers(); return; }
+        S.cam.cd--;
+        if (S.cam.cd <= 0) {
+          clearInterval(S.cam.cdT); S.cam.cdT = null; S.cam.cd = 0;
+          captureNow(); return;
+        }
+        var ov2 = S.root && S.root.querySelector('#hc-cd'), sb = S.root && S.root.querySelector('[data-act="shoot"]');
+        if (ov2) ov2.textContent = String(S.cam.cd);
+        if (sb) sb.textContent = 'Huỷ (' + S.cam.cd + ')';
+      }, 1000);
+    },
+    retake: function () { stopCamTimers(); S.cam.shot = ''; S.cam.dup = null; if (S.room.cfg.challenge) { S.cam.ch = newChallenge(); S.cam.chExp = Date.now() + CHAL_MS; } paint(); startCamera(); },       // chụp lại = mã mới + đồng hồ mới
     sendshot: function () {
       var c = S.cam, m = mineNow(); if (!c || !c.shot || !m || c.sending) return;
       var today = S.calc.today, cm = curCommit(m, today), tm = targetMs(today, cm.target, S.room.cfg.cutoff), key = m.uid + '|' + today;
@@ -1689,8 +2031,9 @@ const collaborationModule = (function () {
   };
   ACTIONS['arc-mode'] = function (el) {
     if (!S.calc) return;
-    var m = el.getAttribute('data-amode');
-    arcState(S.calc.today).mode = (m === 'gallery' || m === 'month') ? m : 'day';
+    var m = el.getAttribute('data-amode'), arc = arcState(S.calc.today);
+    arc.mode = (m === 'gallery' || m === 'month' || m === 'weekly') ? m : 'day';
+    if (arc.mode === 'weekly' && !arc.week) arc.week = lastWeekStart(S.calc.today);
     paint();
   };
   ACTIONS['arc-month'] = function (el) {
@@ -1714,8 +2057,44 @@ const collaborationModule = (function () {
     var d = el.getAttribute('data-day');
     if (!d || d > S.calc.today) return;
     var arc = arcState(S.calc.today);
-    arc.day = d; arc.month = monthKey(d); arc.mode = 'day';
+    S.roomTab = 'archive'; arc.day = d; arc.month = monthKey(d); arc.mode = 'day';
     paint();
+  };
+  ACTIONS['weekly-toggle'] = function (el) {
+    if (!S.room || !S.calc || !S.calc.weekly) return;
+    var ws = el.getAttribute('data-wstart') || S.calc.weekly.weekStart;
+    setWRecapOpen(S.room.id, ws, !isWeeklyOpen(S.room.id, S.calc.weekly, S.calc.today));
+    paint();
+  };
+  ACTIONS['weekly-arc'] = function (el) {
+    if (!S.calc) return;
+    var arc = arcState(S.calc.today);
+    arc.week = el.getAttribute('data-wstart') || lastWeekStart(S.calc.today);
+    arc.mode = 'weekly'; S.roomTab = 'archive';
+    paint();
+  };
+  ACTIONS['arc-week'] = function (el) {
+    if (!S.room || !S.calc) return;
+    var dir = +el.getAttribute('data-dir') || 0, arc = arcState(S.calc.today), cur = weeklySummary(S.room, S.calc, arc.week);
+    if (dir < 0 && !cur.canPrev) return;
+    if (dir > 0 && !cur.canNext) return;
+    arc.week = addDays(cur.weekStart, dir * 7);
+    paint();
+  };
+  ACTIONS['arc-week-latest'] = function () {
+    if (!S.calc) return;
+    arcState(S.calc.today).week = lastWeekStart(S.calc.today);
+    paint();
+  };
+  ACTIONS['weekly-copy'] = function (el) {
+    if (!S.room || !S.calc) return;
+    var ws = el.getAttribute('data-wstart') || (S.calc.weekly && S.calc.weekly.weekStart) || lastWeekStart(S.calc.today);
+    var w = (S.calc.weekly && S.calc.weekly.weekStart === ws) ? S.calc.weekly : weeklySummary(S.room, S.calc, ws);
+    if (!w || !w.hasData) return;
+    var txt = weeklyCardText(S.room, w);
+    var done = function () { toast('Đã chép tổng kết tuần vào clipboard.'); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, function () { window.prompt('Chép tổng kết tuần:', txt); });
+    else window.prompt('Chép tổng kết tuần:', txt);
   };
   ACTIONS['arc-day-shift'] = function (el) {
     if (!S.calc) return;
@@ -1806,16 +2185,19 @@ const collaborationModule = (function () {
     S = freshState(); S.root = container;
     container.innerHTML = '<section class="hub-collab-app" id="hub-collab-app"><div id="hc-view"></div><div class="hub-collab-toast" id="hc-toast" role="status" aria-live="polite"></div></section>';
     bind(container);
+    try { localStorage.removeItem(LEGACY_DEMO_KEY); } catch (e) {}      // dọn dữ liệu demo cũ
     try {
-      if (typeof firebase !== 'undefined' && firebase.apps && firebase.apps.length) {
+      if (hasFirebase()) {
         S.authUnsub = firebase.auth().onAuthStateChanged(function (u) {
-          var want = u ? 'cloud' : 'demo';
-          if (S && S.store && S.store.mode === want && (want === 'demo' || S.store.uid === u.uid)) return;
-          if (S) init();
+          if (!S) return;
+          var first = !S.authReady; S.authReady = true;
+          var cur = S.store ? S.store.uid : '', want = u ? u.uid : '';
+          if (!first && cur === want) return;
+          init();
         });
-      }
-    } catch (e) {}
-    if (!S.store) init();
+      } else S.authReady = true;
+    } catch (e) { S.authReady = true; }
+    if (S.authReady) init(); else paint();                 // có Firebase: chờ lần báo đăng nhập đầu tiên; không có: hiện thẳng cổng
     S.timer = setInterval(tick, 15000);
   }
   function destroy() {
@@ -1832,7 +2214,7 @@ const collaborationModule = (function () {
 
   return {
     id: 'collab-hub', name: 'Cộng tác', icon: ICON, render: render, destroy: destroy,
-    _internals: { replay: replay, groupStreak: groupStreak, computeRoom: computeRoom, judge: judge, findDups: findDups, dupAgainst: dupAgainst, hamming: hamming, informative: informative, hashPair: hashPair, hexWords: hexWords, popcount: popcount, chInfo: chInfo, newChallenge: newChallenge, REVIEW_MS: REVIEW_MS, DUP_MAX: DUP_MAX, dayKey: dayKey, scheduled: scheduled, targetMs: targetMs, addDays: addDays, DemoStore: DemoStore, inviteState: inviteState, expiryMs: expiryMs, spanText: spanText, lateInfo: lateInfo, lateBucketLabel: lateBucketLabel }   // chỉ để kiểm thử
+    _internals: { replay: replay, groupStreak: groupStreak, computeRoom: computeRoom, weeklySummary: weeklySummary, mondayOf: mondayOf, lastWeekStart: lastWeekStart, isMonday: isMonday, isWeeklyOpen: isWeeklyOpen, setWRecapOpen: setWRecapOpen, judge: judge, findDups: findDups, dupAgainst: dupAgainst, hamming: hamming, informative: informative, hashPair: hashPair, hexWords: hexWords, popcount: popcount, chInfo: chInfo, newChallenge: newChallenge, REVIEW_MS: REVIEW_MS, DUP_MAX: DUP_MAX, dayKey: dayKey, scheduled: scheduled, targetMs: targetMs, addDays: addDays, inviteState: inviteState, expiryMs: expiryMs, spanText: spanText, lateInfo: lateInfo, lateBucketLabel: lateBucketLabel }   // chỉ để kiểm thử
   };
 })();
 
