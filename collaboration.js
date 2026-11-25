@@ -11,6 +11,9 @@
      DemoStore  — localStorage, 2 bạn ảo tự check-in (dùng khi chưa đăng nhập)
    Streak / tim KHÔNG được lưu: luôn tính lại từ danh sách check-in (replay),
    nên không ai sửa tay con số được.
+
+   Quản lý phòng (chủ phòng): mã mời có hạn dùng · đổi mã · khoá/mở phòng · giới hạn số người ·
+   đổi tên · mời thành viên ra · chuyển chủ phòng · xoá phòng. Thành viên: xem mã + danh sách, tự rời.
    ================================================================ */
 const collaborationModule = (function () {
   'use strict';
@@ -23,6 +26,10 @@ const collaborationModule = (function () {
   var REGEN_CHOICES = [3, 5, 7, 14];
   var FREQ = { daily: 'Mỗi ngày', weekdays: 'Thứ 2 – Thứ 6' };
   var DOW = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
+  var DEFAULT_MAX_MEMBERS = 10, LEGACY_MAX_MEMBERS = 20;       // phòng mới tối đa 10 người; phòng cũ (chưa có trường này) giữ mức 20
+  var MAX_CHOICES = [2, 3, 4, 5, 6, 8, 10, 15, 20];
+  var EXPIRY = [['1d', '1 ngày', 1], ['7d', '7 ngày', 7], ['30d', '30 ngày', 30], ['never', 'Không hết hạn', 0]];
+  var DEFAULT_EXPIRY = '7d';
 
   /* ───────────── ngày giờ ───────────── */
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
@@ -45,6 +52,28 @@ const collaborationModule = (function () {
   function leftText(ms) {
     var m = Math.max(0, Math.floor(ms / 60000));
     return Math.floor(m / 60) + 'g ' + pad(m % 60) + 'p';
+  }
+  function fmtStamp(ms) { return fmtTime(ms) + ' · ' + fmtDay(ymd(new Date(ms))); }
+  /** Khoá hạn → mốc thời gian (ms) hoặc null = không hết hạn. */
+  function expiryMs(key) {
+    var e = EXPIRY.filter(function (x) { return x[0] === key; })[0];
+    return !e || !e[2] ? null : Date.now() + e[2] * 86400000;
+  }
+  function spanText(ms) {
+    var m = Math.floor(ms / 60000);
+    if (m >= 1440) return Math.floor(m / 1440) + ' ngày';
+    if (m >= 60) return Math.floor(m / 60) + ' giờ';
+    return Math.max(1, m) + ' phút';
+  }
+  /** Tình trạng mã mời của phòng: { kind: ok | locked | expired | gone | unknown, icon, text } */
+  function inviteState(room, now) {
+    var iv = room.invite;
+    if (!iv) return { kind: 'unknown', icon: '…', text: 'Đang tải hiệu lực của mã…' };
+    if (iv.exists === false) return { kind: 'gone', icon: '!', text: 'Mã này không còn trong hệ thống — hãy đổi mã mới.' };
+    if (iv.expiresAt != null && iv.expiresAt <= now) return { kind: 'expired', icon: '!', text: 'Đã hết hạn lúc ' + fmtStamp(iv.expiresAt) + ' — hãy đổi mã mới.' };
+    var base = iv.expiresAt == null ? 'Không hết hạn' : 'Còn hiệu lực đến ' + fmtStamp(iv.expiresAt) + ' (còn ' + spanText(iv.expiresAt - now) + ')';
+    if (room.joinOpen === false) return { kind: 'locked', icon: 'II', text: 'Đang khoá: chưa ai vào được. ' + base + '.' };
+    return { kind: 'ok', icon: '✓', text: base + '.' };
   }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function hash(str) { var h = 5381; for (var i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0; return Math.abs(h); }
@@ -132,6 +161,8 @@ const collaborationModule = (function () {
     function botMs(uid, date) { return parseYmd(date).getTime() + (7 * 60 + hash(uid + date) % (15 * 60)) * 60000; }   // 07:00 – 22:00
     function out(r) {
       return { id: r.id, name: r.name, code: r.code, ownerUid: r.ownerUid, cfg: r.cfg,
+        joinOpen: r.joinOpen !== false, maxMembers: r.maxMembers || LEGACY_MAX_MEMBERS, deleting: false,
+        invite: { exists: true, expiresAt: r.inviteExp == null ? null : r.inviteExp },
         members: Object.keys(r.members).map(function (k) { return r.members[k]; }),
         checkins: r.checkins, nudges: Object.keys(r.nudges).map(function (k) { return r.nudges[k]; }) };
     }
@@ -147,7 +178,7 @@ const collaborationModule = (function () {
     }
     function emit() { if (watching && db.rooms[watching.id]) watching.cb(out(db.rooms[watching.id])); }
     function room(id) { var r = db.rooms[id]; if (!r) throw new Error('Phòng không còn tồn tại.'); return r; }
-    function member(prof, today) { return { uid: ME, name: prof.name, commits: [{ from: today, title: prof.title, freq: prof.freq, target: prof.target || '' }] }; }
+    function member(prof, today) { return { uid: ME, name: prof.name, joinedAt: Date.now(), commits: [{ from: today, title: prof.title, freq: prof.freq, target: prof.target || '' }] }; }
     function ok(v) { return Promise.resolve(v); }
     function botPhoto(uid, name, date, at) {            // ảnh minh hoạ cho bạn ảo, sinh ra tại chỗ
       var h = hash(uid + date) % 360, svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 180'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='hsl(" + h + ",55%,38%)'/><stop offset='1' stop-color='hsl(" + ((h + 60) % 360) + ",60%,22%)'/></linearGradient></defs><rect width='240' height='180' fill='url(#g)'/><text x='120' y='104' font-family='sans-serif' font-size='72' font-weight='700' fill='white' fill-opacity='.85' text-anchor='middle'>" + name.charAt(0).toUpperCase() + "</text><rect x='8' y='148' width='132' height='24' rx='5' fill='black' fill-opacity='.55'/><text x='16' y='165' font-family='monospace' font-size='13' fill='white'>" + fmtTime(at) + " · " + fmtDay(date) + " · " + name + "</text></svg>";
@@ -157,11 +188,12 @@ const collaborationModule = (function () {
       mode: 'demo', uid: ME, name: '',
       listRooms: function () {
         return ok(Object.keys(db.rooms).filter(function (k) { return db.rooms[k].members[ME]; }).map(function (k) {
-          var r = db.rooms[k]; return { id: r.id, name: r.name, code: r.code, members: Object.keys(r.members).map(function (u) { return r.members[u].name; }) };
+          var r = db.rooms[k]; return { id: r.id, name: r.name, code: r.code, owner: r.ownerUid === ME, members: Object.keys(r.members).map(function (u) { return r.members[u].name; }) };
         }));
       },
       createRoom: function (name, prof, today) {
-        var id = 'demo-' + genCode().slice(4).replace('-', ''), r = { id: id, name: name, code: genCode(), ownerUid: ME, cfg: JSON.parse(JSON.stringify(DEFAULT_CFG)), members: {}, checkins: {}, nudges: {} };
+        var id = 'demo-' + genCode().slice(4).replace('-', ''), r = { id: id, name: name, code: genCode(), ownerUid: ME, cfg: JSON.parse(JSON.stringify(DEFAULT_CFG)), members: {}, checkins: {}, nudges: {},
+          maxMembers: DEFAULT_MAX_MEMBERS, joinOpen: true, inviteExp: Date.now() + 7 * 86400000 };
         r.members[ME] = member(prof, today);
         var from = addDays(today, -10);
         [['bot-budy', 'Budy', 'Học 2 giờ', 'daily', 7], ['bot-mia', 'Mia', 'Đọc sách 30 phút', 'weekdays', 5]].forEach(function (b) {
@@ -174,7 +206,13 @@ const collaborationModule = (function () {
       joinRoom: function (code, prof, today) {
         var id = Object.keys(db.rooms).filter(function (k) { return db.rooms[k].code === code; })[0];
         if (!id) return Promise.reject(new Error('Không tìm thấy mã này. (Chế độ demo chỉ có phòng do bạn tạo trên máy này.)'));
-        if (!db.rooms[id].members[ME]) { db.rooms[id].members[ME] = member(prof, today); save(); }
+        var jr = db.rooms[id];
+        if (!jr.members[ME]) {
+          if (jr.inviteExp != null && jr.inviteExp <= Date.now()) return Promise.reject(new Error('Mã mời đã hết hạn — nhờ chủ phòng đổi mã mới.'));
+          if (jr.joinOpen === false) return Promise.reject(new Error('Phòng đang khoá, chưa nhận thêm người.'));
+          if (Object.keys(jr.members).length >= (jr.maxMembers || LEGACY_MAX_MEMBERS)) return Promise.reject(new Error('Phòng đã đủ người.'));
+          jr.members[ME] = member(prof, today); save();
+        }
         return ok(id);
       },
       watch: function (id, cb) { watching = { id: id, cb: cb }; if (simulate(room(id))) save(); emit(); return function () { watching = null; }; },
@@ -199,73 +237,123 @@ const collaborationModule = (function () {
         save(); emit(); return ok();
       },
       setCfg: function (id, cfg) { var r = room(id); r.cfg.maxHearts = cfg.maxHearts; r.cfg.regenDays = cfg.regenDays; save(); emit(); return ok(); },
+      /* ---- quản lý phòng (demo: chạy trên localStorage, bạn ảo cũng kick / nhận chủ phòng được để thử giao diện) ---- */
+      setInfo: function (id, info) { var r = room(id); r.name = info.name; r.maxMembers = info.maxMembers; save(); emit(); return ok(); },
+      setJoinOpen: function (id, open) { room(id).joinOpen = !!open; save(); emit(); return ok(); },
+      setInviteExpiry: function (id, code, ms) { room(id).inviteExp = ms; save(); emit(); return ok(); },
+      regenCode: function (id, oldCode, ms) { var r = room(id); r.code = genCode(); r.inviteExp = ms; save(); emit(); return ok(r.code); },
+      kick: function (id, uid, o) {
+        var r = room(id); if (uid === ME) return Promise.reject(new Error('Không thể tự mời mình ra.'));
+        delete r.members[uid]; delete r.checkins[uid];
+        Object.keys(r.nudges).forEach(function (k) { if (r.nudges[k].from === uid || r.nudges[k].to === uid) delete r.nudges[k]; });
+        var code = ''; if (o && o.regen) { code = genCode(); r.code = code; r.inviteExp = o.expiryMs; }
+        save(); emit(); return ok(code);
+      },
+      transferOwner: function (id, uid) { var r = room(id); if (!r.members[uid]) return Promise.reject(new Error('Người này không còn trong phòng.')); r.ownerUid = uid; save(); emit(); return ok(); },
+      deleteRoom: function (id, onProgress) { room(id); if (onProgress) onProgress(1, 1); delete db.rooms[id]; save(); return ok(); },
+      forget: function () { return ok(); },
       leave: function (id) { var r = room(id); delete r.members[ME]; delete db.rooms[id]; save(); return ok(); }
     };
   }
 
   /* ───────────── CloudStore (Firebase Auth + Firestore) ─────────────
-     rooms/{roomId}                       { name, code, ownerUid, maxHearts, regenDays, cutoff, createdAt }
+     rooms/{roomId}                       { name, code, ownerUid, maxHearts, regenDays, cutoff, createdAt,
+                                            maxMembers, joinOpen, memberCount, deleting? }
      rooms/{roomId}/members/{uid}         { uid, name, commits[], joinedAt, code? }
      rooms/{roomId}/checkins/{uid_date}   { uid, date, day, at(serverTimestamp), note, late, hasPhoto }
      rooms/{roomId}/photos/{uid_date}     { uid, date, img(JPEG dataURL ≤ ~220KB), at }   ← tách riêng để tải lịch sử check-in vẫn nhẹ
      rooms/{roomId}/nudges/{from_to_date} { from, to, date, at }
-     invites/{code}                       { roomId, createdBy, createdAt }
-     users/{uid}/collab/rooms             { ids: [roomId…] }                                      */
+     invites/{code}                       { roomId, createdBy, createdAt, expiresAt|null }   ← hạn dùng nằm ở đây, Rules kiểm tra khi vào phòng
+     users/{uid}/collab/rooms             { ids: [roomId…] }
+     Xoá phòng 2 bước: (1) rooms/{id}.deleting = true  (2) chủ phòng xoá dữ liệu con rồi xoá phòng — Rules chỉ cho xoá khi deleting = true. */
   function CloudStore() {
-    var me = firebase.auth().currentUser, db = firebase.firestore(), FV = firebase.firestore.FieldValue;
+    var me = firebase.auth().currentUser, db = firebase.firestore(), FV = firebase.firestore.FieldValue, TS = firebase.firestore.Timestamp;
     function ms(ts) { return ts && ts.toMillis ? ts.toMillis() : Date.now(); }           // chờ serverTimestamp → dùng giờ máy tạm thời
+    function msOrNull(ts) { return ts && ts.toMillis ? ts.toMillis() : null; }
+    function tsOrNull(v) { return v == null ? null : TS.fromMillis(v); }
     function profRef() { return db.collection('users').doc(me.uid).collection('collab').doc('rooms'); }
     function rRef(id) { return db.collection('rooms').doc(id); }
+    function iRef(code) { return db.collection('invites').doc(code); }
     function memberDoc(prof, today) { return { uid: me.uid, name: prof.name, commits: [{ from: today, title: prof.title, freq: prof.freq, target: prof.target || '' }], joinedAt: FV.serverTimestamp() }; }
+    function isGone(e) { return !!e && (e.code === 'permission-denied' || e.code === 'not-found'); }
     return {
       mode: 'cloud', uid: me.uid, name: me.displayName || '',
       listRooms: async function () {
-        var s = await profRef().get(), ids = (s.exists && s.data().ids) || [], res = [];
+        var s = await profRef().get(), ids = (s.exists && s.data().ids) || [], res = [], stale = [];
         await Promise.all(ids.map(async function (id) {
           try {
-            var r = await rRef(id).get(); if (!r.exists) return;
+            var r = await rRef(id).get(), d = r.exists ? r.data() : null;
+            if (!d || (d.deleting && d.ownerUid !== me.uid)) { stale.push(id); return; }     // phòng đã xoá
             var m = await rRef(id).collection('members').get();
-            res.push({ id: id, name: r.data().name, code: r.data().code, members: m.docs.map(function (d) { return d.data().name; }) });
-          } catch (e) {}
+            res.push({ id: id, name: d.name, code: d.code, owner: d.ownerUid === me.uid, members: m.docs.map(function (x) { return x.data().name; }) });
+          } catch (e) { if (isGone(e)) stale.push(id); }                                       // bị mời ra khỏi phòng → không đọc được nữa
         }));
+        if (stale.length) { try { await profRef().set({ ids: FV.arrayRemove.apply(FV, stale) }, { merge: true }); } catch (e) {} }   // tự dọn danh sách phòng của mình
         return res;
       },
       createRoom: async function (name, prof, today) {
         var ref = db.collection('rooms').doc(), code = genCode(), b = db.batch();
-        b.set(ref, { name: name, code: code, ownerUid: me.uid, maxHearts: DEFAULT_CFG.maxHearts, regenDays: DEFAULT_CFG.regenDays, cutoff: DEFAULT_CFG.cutoff, createdAt: FV.serverTimestamp() });
+        b.set(ref, { name: name, code: code, ownerUid: me.uid, maxHearts: DEFAULT_CFG.maxHearts, regenDays: DEFAULT_CFG.regenDays, cutoff: DEFAULT_CFG.cutoff,
+          maxMembers: DEFAULT_MAX_MEMBERS, joinOpen: true, memberCount: 1, createdAt: FV.serverTimestamp() });
         b.set(ref.collection('members').doc(me.uid), memberDoc(prof, today));
-        b.set(db.collection('invites').doc(code), { roomId: ref.id, createdBy: me.uid, createdAt: FV.serverTimestamp() });
+        b.set(iRef(code), { roomId: ref.id, createdBy: me.uid, createdAt: FV.serverTimestamp(), expiresAt: tsOrNull(Date.now() + 7 * 86400000) });
         b.set(profRef(), { ids: FV.arrayUnion(ref.id) }, { merge: true });
         await b.commit();
         return ref.id;
       },
       joinRoom: async function (code, prof, today) {
-        var inv = await db.collection('invites').doc(code).get();
-        if (!inv.exists) throw new Error('Mã mời không đúng.');
-        var roomId = inv.data().roomId, mine = await profRef().get();
+        var inv = await iRef(code).get();
+        if (!inv.exists) throw new Error('Mã mời không đúng (hoặc chủ phòng đã đổi mã).');
+        var iv = inv.data(), exp = msOrNull(iv.expiresAt);
+        if (exp != null && exp <= Date.now()) throw new Error('Mã mời đã hết hạn — nhờ chủ phòng đổi mã mới.');
+        var roomId = iv.roomId, mine = await profRef().get();
         if (mine.exists && (mine.data().ids || []).indexOf(roomId) > -1) return roomId;      // đã ở trong phòng → không ghi đè cam kết
         var b = db.batch(), md = memberDoc(prof, today); md.code = code;
         b.set(rRef(roomId).collection('members').doc(me.uid), md);
+        b.update(rRef(roomId), { memberCount: FV.increment(1) });                            // Rules kiểm tra còn chỗ + phòng đang mở dựa trên con số này
         b.set(profRef(), { ids: FV.arrayUnion(roomId) }, { merge: true });
-        await b.commit();
+        try { await b.commit(); } catch (e) {
+          if (e && e.code === 'permission-denied') throw new Error('Không vào được phòng: mã đã hết hạn, phòng đang khoá hoặc đã đủ người.');
+          throw e;
+        }
         return roomId;
       },
       watch: function (id, cb) {
-        var st = { room: null, members: [], checkins: [], nudges: [] }, offs = [], today = dayKey(Date.now(), DEFAULT_CFG.cutoff);
+        var st = { room: null, members: [], mLoaded: false, checkins: [], nudges: [], invite: null, invCode: '', offInv: null, healed: -1 }, offs = [], today = dayKey(Date.now(), DEFAULT_CFG.cutoff);
         function emit() {
           if (!st.room) return;
           var r = st.room, co = {};
+          if (r.deleting && r.ownerUid !== me.uid) { cb(null, { code: 'deleting' }); return; }       // chủ phòng đã bấm xoá
+          if (st.mLoaded && r.ownerUid === me.uid && !r.deleting && r.memberCount !== st.members.length && st.healed !== st.members.length) {
+            st.healed = st.members.length;                                                         // phòng cũ / lệch số đếm → chủ phòng tự chỉnh lại
+            rRef(id).update({ memberCount: st.members.length }).catch(function () {});
+          }
           st.checkins.forEach(function (c) { (co[c.uid] = co[c.uid] || {})[c.date] = { at: ms(c.at), note: c.note || '', late: !!c.late, hasPhoto: !!c.hasPhoto }; });
-          cb({ id: id, name: r.name, code: r.code, ownerUid: r.ownerUid,
+          cb({ id: id, name: r.name, code: r.code, ownerUid: r.ownerUid, deleting: !!r.deleting,
+            joinOpen: r.joinOpen !== false, maxMembers: r.maxMembers || LEGACY_MAX_MEMBERS, invite: st.invite,
             cfg: { maxHearts: r.maxHearts || DEFAULT_CFG.maxHearts, regenDays: r.regenDays || DEFAULT_CFG.regenDays, cutoff: r.cutoff == null ? DEFAULT_CFG.cutoff : r.cutoff },
             members: st.members, checkins: co, nudges: st.nudges });
         }
         function fail(e) { cb(null, e); }
-        offs.push(rRef(id).onSnapshot(function (s) { st.room = s.exists ? s.data() : null; if (!s.exists) cb(null, { code: 'not-found' }); else emit(); }, fail));
-        offs.push(rRef(id).collection('members').onSnapshot(function (s) { st.members = s.docs.map(function (d) { var x = d.data(); return { uid: x.uid || d.id, name: x.name || '?', commits: x.commits || [] }; }); emit(); }, fail));
+        function syncInvite(code) {                                                                // theo dõi hạn dùng của mã hiện tại (đổi mã → theo mã mới)
+          if (!code || code === st.invCode) return;
+          st.invCode = code; st.invite = null;
+          if (st.offInv) { try { st.offInv(); } catch (e) {} }
+          st.offInv = iRef(code).onSnapshot(function (s) {
+            st.invite = { exists: s.exists, expiresAt: s.exists ? msOrNull(s.data().expiresAt) : null }; emit();
+          }, function () { st.invite = null; emit(); });
+        }
+        offs.push(rRef(id).onSnapshot(function (s) {
+          st.room = s.exists ? s.data() : null;
+          if (!s.exists) cb(null, { code: 'not-found' }); else { syncInvite(st.room.code); emit(); }
+        }, fail));
+        offs.push(rRef(id).collection('members').onSnapshot(function (s) {
+          st.members = s.docs.map(function (d) { var x = d.data(); return { uid: x.uid || d.id, name: x.name || '?', commits: x.commits || [], joinedAt: x.joinedAt && x.joinedAt.toMillis ? x.joinedAt.toMillis() : 0 }; });
+          st.mLoaded = true; emit();
+        }, fail));
         offs.push(rRef(id).collection('checkins').onSnapshot(function (s) { st.checkins = s.docs.map(function (d) { return d.data(); }); emit(); }, fail));
         offs.push(rRef(id).collection('nudges').where('date', '>=', addDays(today, -1)).onSnapshot(function (s) { st.nudges = s.docs.map(function (d) { return d.data(); }); emit(); }, fail));
-        return function () { offs.forEach(function (f) { try { f(); } catch (e) {} }); };
+        return function () { offs.forEach(function (f) { try { f(); } catch (e) {} }); if (st.offInv) { try { st.offInv(); } catch (e) {} } };
       },
       checkIn: function (id, date, note, late, photo) {          // ảnh + check-in ghi cùng một lúc (batch) — thiếu ảnh thì Rules từ chối
         if (!photo) return Promise.reject(new Error('Cần chụp ảnh để check-in.'));
@@ -284,9 +372,57 @@ const collaborationModule = (function () {
       setCommits: function (id, commits) { return rRef(id).collection('members').doc(me.uid).update({ commits: commits }); },
       nudge: function (id, to, date) { return rRef(id).collection('nudges').doc(me.uid + '_' + to + '_' + date).set({ from: me.uid, to: to, date: date, at: FV.serverTimestamp() }); },
       setCfg: function (id, cfg) { return rRef(id).update({ maxHearts: cfg.maxHearts, regenDays: cfg.regenDays }); },
+
+      /* ---- quản lý phòng (chỉ chủ phòng; Rules kiểm tra lại từng thao tác) ---- */
+      setInfo: function (id, info) { return rRef(id).update({ name: info.name, maxMembers: info.maxMembers }); },
+      setJoinOpen: function (id, open) { return rRef(id).update({ joinOpen: !!open }); },
+      setInviteExpiry: function (id, code, expMs) { return iRef(code).update({ expiresAt: tsOrNull(expMs) }); },
+      regenCode: async function (id, oldCode, expMs) {                // mã mới + thu hồi mã cũ, cùng một batch
+        var code = genCode(), b = db.batch();
+        b.set(iRef(code), { roomId: id, createdBy: me.uid, createdAt: FV.serverTimestamp(), expiresAt: tsOrNull(expMs) });
+        b.update(rRef(id), { code: code });
+        if (oldCode) b.delete(iRef(oldCode));
+        await b.commit();
+        return code;
+      },
+      kick: async function (id, uid, o) {                             // xoá hồ sơ thành viên (lịch sử check-in giữ lại nhưng không còn tính); tuỳ chọn đổi mã luôn
+        var b = db.batch(), upd = { memberCount: FV.increment(-1) }, code = '';
+        b.delete(rRef(id).collection('members').doc(uid));
+        if (o && o.regen) {
+          code = genCode();
+          b.set(iRef(code), { roomId: id, createdBy: me.uid, createdAt: FV.serverTimestamp(), expiresAt: tsOrNull(o.expiryMs) });
+          upd.code = code;
+          if (o.oldCode) b.delete(iRef(o.oldCode));
+        }
+        b.update(rRef(id), upd);
+        await b.commit();
+        return code;
+      },
+      transferOwner: function (id, uid) { return rRef(id).update({ ownerUid: uid }); },
+      deleteRoom: async function (id, onProgress) {
+        var r = rRef(id), snap = await r.get(), code = snap.exists ? snap.data().code : '';
+        await r.update({ deleting: true });                           // bước 1: các thành viên khác thấy "phòng đã bị xoá"
+        var refs = [];
+        (await r.collection('checkins').get()).docs.forEach(function (d) { refs.push(d.ref); refs.push(r.collection('photos').doc(d.id)); });   // ảnh cùng id với check-in → không cần tải ảnh về
+        (await r.collection('nudges').get()).docs.forEach(function (d) { refs.push(d.ref); });
+        (await r.collection('members').get()).docs.forEach(function (d) { if (d.id !== me.uid) refs.push(d.ref); });
+        for (var i = 0; i < refs.length; i += 200) {
+          var b = db.batch(); refs.slice(i, i + 200).forEach(function (ref) { b.delete(ref); });
+          await b.commit();
+          if (onProgress) onProgress(Math.min(i + 200, refs.length), refs.length);
+        }
+        var f = db.batch();                                           // bước 2: mã mời, hồ sơ của chính mình, phòng, và phòng khỏi danh sách của mình
+        if (code) f.delete(iRef(code));
+        f.delete(r.collection('members').doc(me.uid));
+        f.delete(r);
+        f.set(profRef(), { ids: FV.arrayRemove(id) }, { merge: true });
+        await f.commit();
+      },
+      forget: function (id) { return profRef().set({ ids: FV.arrayRemove(id) }, { merge: true }).catch(function () {}); },
       leave: async function (id) {
         var b = db.batch();
         b.delete(rRef(id).collection('members').doc(me.uid));
+        b.update(rRef(id), { memberCount: FV.increment(-1) });
         b.set(profRef(), { ids: FV.arrayRemove(id) }, { merge: true });
         await b.commit();
       }
@@ -300,7 +436,7 @@ const collaborationModule = (function () {
     return { root: null, store: null, view: 'lobby', roomId: '', rooms: null, room: null, calc: null, unwatch: null, timer: null, authUnsub: null,
       tab: 'create', busy: false, dlg: '', toastT: null, lastDay: '', cam: null, photos: {}, photoView: null,
       form: { room: '', code: '', name: f.name || '', title: f.title || '', freq: f.freq || 'daily', target: f.target || '' },
-      dlgForm: null };
+      dlgForm: null, mg: null, confirm: null };
   }
   function heartsHtml(h, max) {
     var out = '<span class="hub-collab-hearts" role="img" aria-label="' + h + ' trên ' + max + ' tim">';
@@ -315,7 +451,7 @@ const collaborationModule = (function () {
     clearTimeout(S.toastT); S.toastT = setTimeout(function () { t.classList.remove('is-on'); }, 3800);
   }
   function errMsg(e) {
-    if (e && (e.code === 'permission-denied' || /permission/i.test(e.message || ''))) return 'Chưa có quyền ghi dữ liệu — cần cập nhật Firestore Rules (xem firestore.rules.collab.txt).';
+    if (e && (e.code === 'permission-denied' || /permission/i.test(e.message || ''))) return 'Firestore Rules chưa cho phép thao tác này — hãy dán bản firestore.rules mới vào Firebase Console › Firestore › Rules rồi Publish.';
     return (e && e.message) || 'Có lỗi xảy ra, thử lại nhé.';
   }
 
@@ -323,9 +459,9 @@ const collaborationModule = (function () {
   function viewLobby() {
     var st = S.store, f = S.form, demo = st.mode === 'demo', rooms = S.rooms;
     var list = rooms === null ? '<p class="hub-collab-muted">Đang tải…</p>'
-      : !rooms.length ? '<p class="hub-collab-muted">Chưa có phòng nào. Tạo một phòng hoặc nhập mã mời của bạn bè.</p>'
+      : !rooms.length ? '<p class="hub-collab-muted hub-collab-empty">Chưa có phòng nào. Tạo một phòng hoặc nhập mã mời của bạn bè.</p>'
       : '<ul class="hub-collab-roomlist">' + rooms.map(function (r) {
-          return '<li><button type="button" class="hub-collab-room" data-act="open" data-id="' + esc(r.id) + '"><span class="hub-collab-room-name">' + esc(r.name) + '</span>' +
+          return '<li><button type="button" class="hub-collab-room" data-act="open" data-id="' + esc(r.id) + '"><span class="hub-collab-room-name">' + esc(r.name) + (r.owner ? '<span class="hub-collab-role is-owner">Chủ phòng</span>' : '') + '</span>' +
             '<span class="hub-collab-room-meta">' + esc(r.members.join(' · ')) + '</span></button></li>';
         }).join('') + '</ul>';
     var create = S.tab === 'create';
@@ -367,13 +503,15 @@ const collaborationModule = (function () {
         '<div class="hub-collab-roomhead"><h2 class="hub-collab-title">' + esc(room.name) + '</h2>' +
           '<p class="hub-collab-subtitle">' + room.members.length + ' thành viên · lỡ 1 ngày: −1 tim · hết tim: mất streak · ' + cfg.regenDays + ' ngày check-in liền: +1 tim</p></div>' +
         '<div class="hub-collab-headacts"><button type="button" class="hub-collab-chipbtn" data-act="copy" title="Chép mã mời">' + esc(room.code) + '</button>' +
+          '<button type="button" class="hub-collab-btn" data-act="dlg" data-dlg="manage">' + (isOwner ? 'Quản lý' : 'Thành viên') + '</button>' +
           '<button type="button" class="hub-collab-btn" data-act="dlg" data-dlg="settings">Cài đặt</button></div></header>' +
+      roomBanners(room, isOwner) +
       (nudgedMe.length && !c.states[me].todayDone && c.states[me].todayOn ? '<div class="hub-collab-banner is-nudge" role="status">' + esc(nudgedMe.join(', ')) + ' vừa nhắc bạn check-in hôm nay.</div>' : '') +
       groupHtml(g) + meHtml(mine, room, c, now) +
       '<h3 class="hub-collab-h3 hub-collab-h3--gap">Cả phòng hôm nay</h3><div class="hub-collab-members">' +
         members.map(function (m) { return memberHtml(m, room, c, me, nudgedBy); }).join('') + '</div>' +
       '<h3 class="hub-collab-h3 hub-collab-h3--gap">Nhật ký check-in</h3>' + feedHtml(c) +
-      (S.dlg === 'camera' ? cameraHtml() : S.dlg === 'photo' ? photoHtml(room) : S.dlg ? dialogHtml(room, mine, isOwner, today) : '');
+      (S.dlg === 'camera' ? cameraHtml() : S.dlg === 'photo' ? photoHtml(room) : S.dlg === 'manage' ? manageHtml(room, isOwner) : S.dlg === 'confirm' && S.confirm ? confirmHtml() : S.dlg ? dialogHtml(room, mine, isOwner, today) : '');
   }
   function groupHtml(g) {
     var pct = g.total ? Math.round(g.n / g.total * 100) : 0;
@@ -421,7 +559,7 @@ const collaborationModule = (function () {
         stripHtml(st.log) + '</div><div class="hub-collab-member-act">' + (ci && ci.hasPhoto ? thumbHtml(m.uid, c.today, m.name, '') : '') + act + '</div></article>';
   }
   function feedHtml(c) {
-    if (!c.feed.length) return '<p class="hub-collab-muted">Chưa có ai check-in. Người đầu tiên là bạn?</p>';
+    if (!c.feed.length) return '<p class="hub-collab-muted hub-collab-feed-empty">Chưa có ai check-in. Người đầu tiên là bạn?</p>';
     return '<ul class="hub-collab-feed">' + c.feed.map(function (e) {
       return '<li><time>' + fmtTime(e.at) + ' · ' + fmtDay(e.date) + '</time>' + (e.photo ? thumbHtml(e.uid, e.date, e.name, 'is-sm') : '') + '<span><b>' + esc(e.name) + '</b> đã check-in' + (e.note ? ' — “' + esc(e.note) + '”' : '') + '</span></li>';
     }).join('') + '</ul>';
@@ -442,8 +580,74 @@ const collaborationModule = (function () {
         field('Số tim tối đa', '<select class="hub-collab-input" data-d="max">' + HEART_CHOICES.map(function (n) { return '<option value="' + n + '"' + (f.max === n ? ' selected' : '') + '>' + n + ' tim</option>'; }).join('') + '</select>') +
         field('Hồi 1 tim sau', '<select class="hub-collab-input" data-d="regen">' + REGEN_CHOICES.map(function (n) { return '<option value="' + n + '"' + (f.regen === n ? ' selected' : '') + '>' + n + ' ngày liền</option>'; }).join('') + '</select>') + '</div>' +
         '<p class="hub-collab-muted">Đổi luật sẽ tính lại tim và streak của cả phòng theo toàn bộ lịch sử.</p><button type="button" class="hub-collab-btn" data-act="save-cfg">Lưu luật</button>' : '') +
-      '<h4 class="hub-collab-h4">Rời phòng</h4><button type="button" class="hub-collab-btn is-danger" data-act="leave">Rời phòng này</button>' +
+      (isOwner
+        ? '<h4 class="hub-collab-h4">Rời phòng</h4><p class="hub-collab-muted">Chủ phòng không thể rời phòng. Hãy chuyển quyền cho người khác hoặc xoá phòng trong mục <b>Quản lý</b>.</p>' +
+          '<button type="button" class="hub-collab-btn" data-act="dlg" data-dlg="manage">Mở Quản lý phòng</button>'
+        : '<h4 class="hub-collab-h4">Rời phòng</h4><button type="button" class="hub-collab-btn is-danger" data-act="leave">Rời phòng này</button>') +
       '</div></div>';
+  }
+
+  /* ───────────── quản lý phòng: mã mời, thành viên, thiết lập, xoá ───────────── */
+  function roomBanners(room, isOwner) {
+    if (!isOwner) return '';
+    if (room.deleting) return '<div class="hub-collab-banner is-warn" role="alert">Phòng đang ở trạng thái xoá dở (lần xoá trước bị gián đoạn). <button type="button" class="hub-collab-btn" data-act="resume-delete">Tiếp tục xoá</button></div>';
+    var iv = inviteState(room, Date.now());
+    if (iv.kind === 'expired' || iv.kind === 'gone') return '<div class="hub-collab-banner is-warn" role="status">Mã mời ' + (iv.kind === 'expired' ? 'đã hết hạn' : 'không còn hiệu lực') + ', chưa ai vào thêm được. <button type="button" class="hub-collab-btn" data-act="dlg" data-dlg="manage">Đổi mã mới</button></div>';
+    return '';
+  }
+  function manageHtml(room, isOwner) {
+    var me = S.store.uid, now = Date.now(), f = S.mg || { name: room.name, max: room.maxMembers, expiry: DEFAULT_EXPIRY }, n = room.members.length;
+    var iv = inviteState(room, now), cap = room.maxMembers;
+    var members = room.members.slice().sort(function (a, b) {
+      return (a.uid === room.ownerUid ? -1 : b.uid === room.ownerUid ? 1 : 0) || ((a.joinedAt || 0) - (b.joinedAt || 0)) || (a.name < b.name ? -1 : 1);
+    });
+    var rows = members.map(function (m) {
+      var owner = m.uid === room.ownerUid, isMe = m.uid === me, ini = esc((m.name || '?').charAt(0).toUpperCase());
+      return '<li class="hub-collab-mrow"><div class="hub-collab-avatar is-sm" aria-hidden="true" data-i="' + ini + '">' + ini + '</div>' +
+        '<div class="hub-collab-mrow-main"><b>' + esc(m.name) + '</b><span class="hub-collab-mrow-tags">' +
+          (owner ? '<span class="hub-collab-role is-owner">Chủ phòng</span>' : '') + (isMe ? '<span class="hub-collab-me-tag">bạn</span>' : '') +
+          (m.joinedAt ? '<span class="hub-collab-muted">vào ' + fmtDay(ymd(new Date(m.joinedAt))) + '</span>' : '') + '</span></div>' +
+        (isOwner && !isMe ? '<div class="hub-collab-mrow-act"><button type="button" class="hub-collab-btn" data-act="ask-transfer" data-uid="' + esc(m.uid) + '">Chuyển chủ phòng</button>' +
+          '<button type="button" class="hub-collab-btn is-danger" data-act="ask-kick" data-uid="' + esc(m.uid) + '">Mời ra</button></div>' : '') + '</li>';
+    }).join('');
+    var expSel = '<select class="hub-collab-input" data-m="expiry">' + EXPIRY.map(function (e) { return '<option value="' + e[0] + '"' + (f.expiry === e[0] ? ' selected' : '') + '>' + e[1] + '</option>'; }).join('') + '</select>';
+    var ownerCtl = isOwner
+      ? '<div class="hub-collab-row2 hub-collab-invctl">' + field('Hiệu lực của mã', expSel) +
+          '<div class="hub-collab-invbtns"><button type="button" class="hub-collab-btn" data-act="inv-expiry">Áp dụng cho mã này</button><button type="button" class="hub-collab-btn" data-act="inv-regen">Đổi mã mới</button></div></div>' +
+        '<div class="hub-collab-switch"><div><b>' + (room.joinOpen ? 'Đang mở cho người mới' : 'Đang khoá') + '</b><span class="hub-collab-muted">' +
+          (room.joinOpen ? 'Ai có mã còn hạn đều vào được, tối đa ' + cap + ' người.' : 'Không ai vào được bằng mã, kể cả mã còn hạn.') + '</span></div>' +
+          '<button type="button" class="hub-collab-btn" data-act="inv-lock">' + (room.joinOpen ? 'Khoá phòng' : 'Mở lại') + '</button></div>'
+      : '';
+    var info = isOwner
+      ? '<h4 class="hub-collab-h4">Thiết lập phòng</h4><div class="hub-collab-row2">' +
+          field('Tên phòng', '<input class="hub-collab-input" data-m="name" maxlength="40" value="' + esc(f.name) + '">') +
+          field('Số người tối đa', '<select class="hub-collab-input" data-m="max">' + MAX_CHOICES.filter(function (x) { return x >= n; }).map(function (x) { return '<option value="' + x + '"' + (f.max === x ? ' selected' : '') + '>' + x + ' người</option>'; }).join('') + '</select>') + '</div>' +
+          '<button type="button" class="hub-collab-btn" data-act="save-info">Lưu thiết lập</button>'
+      : '';
+    var danger = isOwner
+      ? '<h4 class="hub-collab-h4">Vùng nguy hiểm</h4><div class="hub-collab-danger"><p class="hub-collab-muted">Chủ phòng không thể rời phòng: hãy chuyển quyền cho người khác, hoặc xoá hẳn phòng (mọi check-in và ảnh sẽ mất).</p>' +
+        '<button type="button" class="hub-collab-btn is-danger" data-act="ask-delete">Xoá phòng…</button></div>'
+      : '';
+    return '<div class="hub-collab-scrim" data-act="close"></div><div class="hub-collab-dialog hub-collab-dialog--wide" role="dialog" aria-modal="true" aria-labelledby="hc-dlg-title" tabindex="-1">' +
+      '<div class="hub-collab-dialog-head"><h3 id="hc-dlg-title">' + (isOwner ? 'Quản lý phòng' : 'Thành viên &amp; mã mời') + '</h3>' +
+        '<button type="button" class="hub-collab-btn is-ghost" data-act="close" aria-label="Đóng">✕</button></div><div class="hub-collab-form">' +
+      '<h4 class="hub-collab-h4">Mã mời</h4><div class="hub-collab-invite"><div class="hub-collab-invite-code"><code>' + esc(room.code) + '</code>' +
+        '<button type="button" class="hub-collab-btn" data-act="copy">Chép mã</button></div>' +
+        '<p class="hub-collab-invstate is-' + iv.kind + '" data-icon="' + esc(iv.icon) + '">' + esc(iv.text) + '</p>' + ownerCtl + '</div>' +
+      '<h4 class="hub-collab-h4">Thành viên · ' + n + ' / ' + cap + '</h4><ul class="hub-collab-mlist">' + rows + '</ul>' +
+      info + danger + '</div></div>';
+  }
+  function confirmReady() { var c = S.confirm; return !!c && (!c.need || String(c.typed || '').trim().toLowerCase() === String(c.need).trim().toLowerCase()); }
+  function confirmHtml() {
+    var c = S.confirm;
+    return '<div class="hub-collab-scrim" data-act="close"></div><div class="hub-collab-dialog hub-collab-dialog--confirm" role="alertdialog" aria-modal="true" aria-labelledby="hc-dlg-title" aria-describedby="hc-dlg-body" tabindex="-1">' +
+      '<div class="hub-collab-dialog-head"><h3 id="hc-dlg-title">' + esc(c.title) + '</h3></div><div class="hub-collab-form">' +
+      '<p class="hub-collab-confirm-body" id="hc-dlg-body">' + c.body + '</p>' +
+      (c.need ? field('Gõ “' + esc(c.need) + '” để xác nhận', '<input class="hub-collab-input" data-x="typed" autocomplete="off" value="' + esc(c.typed || '') + '">') : '') +
+      (c.opt ? '<label class="hub-collab-opt"><input type="checkbox" data-x="opt"' + (c.opt.checked ? ' checked' : '') + '><span>' + esc(c.opt.label) + '</span></label>' : '') +
+      '<div class="hub-collab-camacts"><button type="button" class="hub-collab-btn" data-act="close"' + (c.busy ? ' disabled' : '') + '>Huỷ</button>' +
+        '<button type="button" class="hub-collab-btn ' + (c.danger ? 'is-danger' : 'is-primary') + '" data-act="confirm-ok"' + (c.busy || !confirmReady() ? ' disabled' : '') + '>' +
+          esc(c.busy ? (c.progress ? 'Đang xoá… ' + c.progress : 'Đang xử lý…') : c.ok) + '</button></div></div></div>';
   }
 
   /* ───────────── ảnh check-in ───────────── */
@@ -488,8 +692,14 @@ const collaborationModule = (function () {
   function paint() {
     if (!S || !S.root) return;
     var v = S.root.querySelector('#hc-view'); if (!v) return;
+    var ae = document.activeElement, keep = null, pos = null;                       // giữ con trỏ khi dữ liệu realtime vẽ lại giao diện
+    if (ae && ae.getAttribute && v.contains(ae)) ['data-f', 'data-d', 'data-m', 'data-x', 'data-c'].forEach(function (a) { if (!keep && ae.getAttribute(a)) { keep = '[' + a + '="' + ae.getAttribute(a) + '"]'; pos = ae.selectionStart; } });
     v.innerHTML = S.view === 'room' ? (S.room ? viewRoom() : '<p class="hub-collab-muted hub-collab-loading">Đang mở phòng…</p>') : viewLobby();
-    if (S.dlg) { var f = v.querySelector('.hub-collab-dialog [data-d="title"]'); if (f && !S._dlgFocused) { f.focus(); S._dlgFocused = true; } }
+    if (keep) { var k2 = v.querySelector(keep); if (k2) { k2.focus(); try { if (pos != null) k2.setSelectionRange(pos, pos); } catch (e) {} } }
+    else if (S.dlg && !S._dlgFocused) {
+      var dl = v.querySelector('.hub-collab-dialog'), tg = dl && (dl.querySelector(S.dlg === 'settings' ? '[data-d="title"]' : '[data-x="typed"]') || (S.dlg === 'manage' || S.dlg === 'confirm' ? dl : null));
+      if (tg && tg.focus) { tg.focus(); S._dlgFocused = true; }
+    }
     hydratePhotos();
     if (S.dlg === 'camera') attachCamera();
   }
@@ -501,7 +711,13 @@ const collaborationModule = (function () {
   function watchRoom() {
     if (S.unwatch) { S.unwatch(); S.unwatch = null; }
     S.unwatch = S.store.watch(S.roomId, function (room, err) {
-      if (err) { toast(err.code === 'not-found' ? 'Phòng không còn tồn tại.' : errMsg(err)); closeRoom(); return; }
+      if (err) {
+        if (err.code === 'not-found' || err.code === 'deleting' || err.code === 'permission-denied') {      // phòng đã xoá, hoặc mình đã bị mời ra
+          if (S.store.forget) S.store.forget(S.roomId);
+          toast(err.code === 'deleting' ? 'Chủ phòng đã xoá phòng này.' : err.code === 'not-found' ? 'Phòng không còn tồn tại.' : 'Bạn không còn trong phòng này (đã bị mời ra, hoặc phòng đã bị xoá).');
+        } else toast(errMsg(err));
+        closeRoom(); return;
+      }
       S.room = room; recompute(); paint();
     });
   }
@@ -531,6 +747,20 @@ const collaborationModule = (function () {
   }
   function saveForm() { try { localStorage.setItem(FORM_KEY, JSON.stringify({ name: S.form.name, title: S.form.title, freq: S.form.freq, target: S.form.target })); } catch (e) {} }
   function guard(p) { return p.catch(function (e) { toast(errMsg(e)); }); }
+  /** Chạy một thao tác quản lý: báo lỗi nếu thất bại, báo thành công CHỈ khi thật sự thành công. */
+  function doAct(p, okMsg) { return p.then(function (v) { if (okMsg) toast(okMsg); return v; }, function (e) { toast(errMsg(e)); }); }
+  function askConfirm(o) {
+    S.confirm = { title: o.title, body: o.body, ok: o.ok, danger: !!o.danger, need: o.need || '', typed: '', opt: o.opt || null, run: o.run, back: o.back == null ? 'manage' : o.back, busy: false, progress: '' };
+    S.dlg = 'confirm'; S._dlgFocused = false; paint();
+  }
+  function memberByUid(uid) { return S.room && S.room.members.filter(function (m) { return m.uid === uid; })[0]; }
+  function deleteRun() {
+    return S.store.deleteRoom(S.roomId, function (n, t) {
+      if (!S || !S.confirm) return;
+      S.confirm.progress = n + '/' + t;
+      var b = S.root && S.root.querySelector('[data-act="confirm-ok"]'); if (b) b.textContent = 'Đang xoá… ' + S.confirm.progress;
+    }).then(function () { return { msg: 'Đã xoá phòng.', leave: true }; });
+  }
   function mineNow() { return S.room && S.room.members.filter(function (m) { return m.uid === S.store.uid; })[0]; }
 
   /* ───────────── camera + ảnh ───────────── */
@@ -636,13 +866,17 @@ const collaborationModule = (function () {
     photo: function (el) { S.photoView = { uid: el.getAttribute('data-uid'), date: el.getAttribute('data-date'), name: el.getAttribute('data-name') }; S.dlg = 'photo'; paint(); },
     undo: function () { var m = mineNow(); guard(S.store.undo(S.roomId, S.calc.today)).then(function () { if (m) delete S.photos[m.uid + '|' + S.calc.today]; toast('Đã hoàn tác check-in hôm nay.'); }); },
     nudge: function (el) { guard(S.store.nudge(S.roomId, el.getAttribute('data-uid'), S.calc.today)).then(function () { toast('Đã nhắc bạn ấy.'); }); },
-    dlg: function () {
-      var m = mineNow(), c = curCommit(m, S.calc.today);
-      S.dlg = 'settings'; S._dlgFocused = false;
+    dlg: function (el) {
+      var m = mineNow(), c = curCommit(m, S.calc.today), kind = el && el.getAttribute('data-dlg') === 'manage' ? 'manage' : 'settings';
+      S.dlg = kind; S._dlgFocused = false;
       S.dlgForm = { title: c.title, freq: c.freq, target: c.target || '', max: S.room.cfg.maxHearts, regen: S.room.cfg.regenDays };
+      S.mg = { name: S.room.name, max: S.room.maxMembers, expiry: DEFAULT_EXPIRY };
       paint();
     },
-    close: function () { stopCamera(); S.cam = null; S.photoView = null; S.dlg = ''; S._dlgFocused = false; paint(); },
+    close: function () {
+      if (S.confirm) { if (S.confirm.busy) return; S.dlg = S.confirm.back || ''; S.confirm = null; S._dlgFocused = false; paint(); return; }   // huỷ xác nhận → về hộp thoại trước
+      stopCamera(); S.cam = null; S.photoView = null; S.dlg = ''; S._dlgFocused = false; paint();
+    },
     'save-commit': function () {
       var f = S.dlgForm, m = mineNow(), today = S.calc.today, title = (f.title || '').trim();
       if (!title) { toast('Cam kết không được để trống.'); return; }
@@ -653,9 +887,69 @@ const collaborationModule = (function () {
     },
     'save-cfg': function () { var f = S.dlgForm; guard(S.store.setCfg(S.roomId, { maxHearts: f.max, regenDays: f.regen })).then(function () { toast('Đã cập nhật luật phòng.'); }); },
     leave: function () {
+      if (S.room && S.room.ownerUid === S.store.uid) { toast('Chủ phòng cần chuyển quyền hoặc xoá phòng trước khi rời.'); return; }
       if (!window.confirm('Rời phòng này? Lịch sử check-in của bạn vẫn còn trong phòng nhưng bạn sẽ không còn thấy phòng nữa.')) return;
       guard(S.store.leave(S.roomId)).then(function () { closeRoom(); toast('Đã rời phòng.'); });
     }
+  };
+
+  /* ───────────── thao tác quản lý phòng ───────────── */
+  ACTIONS['inv-expiry'] = function () {
+    var ms = expiryMs(S.mg.expiry);
+    doAct(S.store.setInviteExpiry(S.roomId, S.room.code, ms), ms == null ? 'Mã mời không còn hết hạn.' : 'Mã mời sẽ hết hạn lúc ' + fmtStamp(ms) + '.');
+  };
+  ACTIONS['inv-lock'] = function () {
+    var open = !S.room.joinOpen;
+    doAct(S.store.setJoinOpen(S.roomId, open), open ? 'Đã mở lại cho người mới.' : 'Đã khoá: không ai vào được bằng mã.');
+  };
+  ACTIONS['inv-regen'] = function () {
+    var ms = expiryMs(S.mg.expiry), old = S.room.code;
+    askConfirm({ title: 'Đổi mã mời mới?', body: 'Mã <b>' + esc(old) + '</b> sẽ không dùng được nữa. Người đã ở trong phòng không bị ảnh hưởng.', ok: 'Đổi mã',
+      run: function () { return S.store.regenCode(S.roomId, old, ms).then(function (code) { return { msg: 'Mã mới: ' + code }; }); } });
+  };
+  ACTIONS['save-info'] = function () {
+    var f = S.mg, name = (f.name || '').trim(), n = S.room.members.length;
+    if (!name) { toast('Tên phòng không được để trống.'); return; }
+    if (f.max < n) { toast('Số người tối đa không được nhỏ hơn số người đang có (' + n + ').'); return; }
+    if (name === S.room.name && f.max === S.room.maxMembers) { toast('Không có gì thay đổi.'); return; }
+    doAct(S.store.setInfo(S.roomId, { name: name, maxMembers: f.max }), 'Đã lưu thiết lập phòng.');
+  };
+  ACTIONS['ask-kick'] = function (el) {
+    var uid = el.getAttribute('data-uid'), m = memberByUid(uid); if (!m) return;
+    var ms = expiryMs(S.mg.expiry);
+    askConfirm({ title: 'Mời ' + m.name + ' ra khỏi phòng?',
+      body: '<b>' + esc(m.name) + '</b> sẽ không còn thấy phòng này. Lịch sử check-in của họ vẫn nằm trong phòng nhưng không còn tính vào streak chung.',
+      ok: 'Mời ra', danger: true, opt: { label: 'Đổi mã mời mới luôn (chặn họ vào lại bằng mã cũ)', checked: true },
+      run: function (regen) {
+        return S.store.kick(S.roomId, uid, { regen: regen, oldCode: S.room.code, expiryMs: ms }).then(function (code) {
+          return { msg: 'Đã mời ' + m.name + ' ra khỏi phòng' + (code ? ' · mã mới: ' + code : '') + '.' };
+        });
+      } });
+  };
+  ACTIONS['ask-transfer'] = function (el) {
+    var uid = el.getAttribute('data-uid'), m = memberByUid(uid); if (!m) return;
+    askConfirm({ title: 'Chuyển chủ phòng cho ' + m.name + '?',
+      body: '<b>' + esc(m.name) + '</b> sẽ có toàn quyền quản lý: đổi luật, đổi mã, mời người ra, xoá phòng. Bạn vẫn ở lại phòng như một thành viên và <b>không tự lấy lại được quyền</b>.',
+      ok: 'Chuyển quyền', danger: true,
+      run: function () { return S.store.transferOwner(S.roomId, uid).then(function () { return { msg: m.name + ' là chủ phòng mới.' }; }); } });
+  };
+  ACTIONS['ask-delete'] = function () {
+    askConfirm({ title: 'Xoá phòng “' + S.room.name + '”?',
+      body: 'Mọi thành viên sẽ mất phòng này cùng toàn bộ check-in và ảnh. <b>Không thể khôi phục.</b>',
+      ok: 'Xoá vĩnh viễn', danger: true, need: S.room.name, run: deleteRun });
+  };
+  ACTIONS['resume-delete'] = function () {
+    askConfirm({ title: 'Tiếp tục xoá phòng?', body: 'Lần xoá trước chưa xong. Bấm tiếp tục để dọn nốt phần còn lại.', ok: 'Xoá nốt', danger: true, back: '', run: deleteRun });
+  };
+  ACTIONS['confirm-ok'] = function () {
+    var c = S.confirm; if (!c || c.busy || !confirmReady()) return;
+    c.busy = true; paint();
+    Promise.resolve().then(function () { return c.run(c.opt ? !!c.opt.checked : false); }).then(function (res) {
+      if (!S) return;
+      S.confirm = null;
+      if (res && res.leave) closeRoom(); else { S.dlg = c.back || ''; S._dlgFocused = false; paint(); }
+      if (res && res.msg) toast(res.msg);
+    }, function (e) { if (S && S.confirm) { S.confirm.busy = false; paint(); } toast(errMsg(e)); });
   };
 
   function bind(root) {
@@ -668,6 +962,11 @@ const collaborationModule = (function () {
       if ((k = t.getAttribute('data-f'))) { S.form[k] = t.value; if (k === 'code') S.form.code = t.value.toUpperCase(); }
       else if ((k = t.getAttribute('data-d'))) S.dlgForm[k] = (k === 'max' || k === 'regen') ? +t.value : t.value;
       else if ((k = t.getAttribute('data-c')) && S.cam) S.cam[k] = t.value;
+      else if ((k = t.getAttribute('data-m')) && S.mg) S.mg[k] = k === 'max' ? +t.value : t.value;
+      else if ((k = t.getAttribute('data-x')) && S.confirm) {
+        if (k === 'opt' && S.confirm.opt) S.confirm.opt.checked = t.checked; else if (k === 'typed') S.confirm.typed = t.value;
+        var okb = root.querySelector('[data-act="confirm-ok"]'); if (okb && !S.confirm.busy) okb.disabled = !confirmReady();
+      }
     });
     root.addEventListener('change', function (e) { if (e.target.id === 'hc-file' && e.target.files && e.target.files[0]) useFile(e.target.files[0]); });
     root.addEventListener('keydown', function (e) {
@@ -709,7 +1008,7 @@ const collaborationModule = (function () {
 
   return {
     id: 'collab-hub', name: 'Cộng tác', icon: ICON, render: render, destroy: destroy,
-    _internals: { replay: replay, groupStreak: groupStreak, computeRoom: computeRoom, dayKey: dayKey, scheduled: scheduled, targetMs: targetMs, addDays: addDays, DemoStore: DemoStore }   // chỉ để kiểm thử
+    _internals: { replay: replay, groupStreak: groupStreak, computeRoom: computeRoom, dayKey: dayKey, scheduled: scheduled, targetMs: targetMs, addDays: addDays, DemoStore: DemoStore, inviteState: inviteState, expiryMs: expiryMs, spanText: spanText }   // chỉ để kiểm thử
   };
 })();
 
