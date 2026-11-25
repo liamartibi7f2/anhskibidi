@@ -86,7 +86,7 @@ service cloud.firestore {
     //        maxMembers (2–20), joinOpen (khoá/mở cho người mới), memberCount (đếm thành viên), deleting (đang xoá),
     //        photoDays (3–365, mặc định 30: ảnh check-in mới tự hết hạn sau bấy nhiêu ngày),
     //        challenge (bật/tắt mã thử thách mỗi lần chụp; thiếu = tắt)
-    //   rooms/{roomId}/members/{uid}         hồ sơ + cam kết của từng người
+    //   rooms/{roomId}/members/{uid}         hồ sơ + cam kết của từng người (+ avatar: id ảnh có sẵn, '' / thiếu = chữ cái)
     //   rooms/{roomId}/checkins/{uid_date}   mỗi người mỗi ngày đúng một check-in (BẮT BUỘC kèm ảnh lúc tạo)
     //        + photoMode (all | some | me), photoExpireAt, photoState (deleted | expired khi ảnh đã gỡ). Giờ check-in luôn được giữ.
     //        + ch (mã thử thách 'P482' | 'F7' | ''), ph / pm (dấu vân tay ảnh dHash 256 bit và bản lật ngang; dùng báo ảnh trùng, sống lâu hơn ảnh)
@@ -165,6 +165,7 @@ service cloud.firestore {
     // ── Mã thử thách · dấu vân tay ảnh ───────────────────────────
     //   ch: 'P' + số 100–999 (viết lên giấy) hoặc 'F' + 1–10 (giơ ngón tay); '' = không có.
     //   ph / pm: 64 ký tự hex (256 bit). Luật chỉ kiểm định dạng; việc đối chiếu số trên ảnh là của người duyệt.
+    function okAvatar(d) { return d.get('avatar', '') is string && d.get('avatar', '').matches('^[a-z0-9]{0,16}$'); }   // id avatar có sẵn trong app ('' = dùng chữ cái)
     function okCode(v) { return v is string && (v == '' || v.matches('^(P[1-9][0-9]{2}|F([1-9]|10))$')); }
     function okHash(v) { return v is string && (v == '' || v.matches('^[0-9a-f]{64}$')); }
     function challengeOn(roomId) {
@@ -277,7 +278,8 @@ service cloud.firestore {
         // người khác phải vào bằng mã hợp lệ: đúng phòng, còn hạn, phòng đang mở và còn chỗ (xem canJoin)
         allow create: if signedIn() && request.auth.uid == uid
                       && request.resource.data.uid == uid
-                      && request.resource.data.keys().hasOnly(['uid', 'name', 'commits', 'joinedAt', 'code'])
+                      && request.resource.data.keys().hasOnly(['uid', 'name', 'commits', 'joinedAt', 'code', 'avatar'])
+                      && okAvatar(request.resource.data)
                       && request.resource.data.name is string && request.resource.data.name.size() <= 24
                       && request.resource.data.commits is list && request.resource.data.commits.size() <= 60
                       && ((!exists(/databases/$(db)/documents/rooms/$(roomId))
@@ -287,7 +289,8 @@ service cloud.firestore {
         allow update: if signedIn() && request.auth.uid == uid
                       && request.resource.data.uid == uid
                       && request.resource.data.name is string && request.resource.data.name.size() <= 24
-                      && request.resource.data.commits is list && request.resource.data.commits.size() <= 60;
+                      && request.resource.data.commits is list && request.resource.data.commits.size() <= 60
+                      && okAvatar(request.resource.data);
         // Tự rời phòng (chủ phòng chỉ rời được khi phòng đang bị xoá), hoặc chủ phòng mời người khác ra
         allow delete: if signedIn() && request.auth.uid == uid
                       && (!isRoomOwner(roomId) || roomDeleting(roomId));
