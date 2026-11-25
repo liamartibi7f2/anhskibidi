@@ -419,7 +419,7 @@ const collaborationModule = (function () {
     Object.keys(room.checkins).forEach(function (uid) {
       Object.keys(room.checkins[uid]).forEach(function (date) {
         var ci = room.checkins[uid][date];
-        flat.push({ uid: uid, date: date, ci: ci, at: ci.at, sec: Math.floor(ci.at / 1000), note: ci.note || '', photo: !!ci.hasPhoto, ch: ci.ch || '', ph: ci.ph || '', pm: ci.pm || '', mode: ci.mode || 'all' });
+        flat.push({ uid: uid, date: date, ci: ci, at: ci.at, sec: typeof ci.sec === 'number' && ci.sec > 0 ? ci.sec : Math.floor(ci.at / 1000), note: ci.note || '', photo: !!ci.hasPhoto, ch: ci.ch || '', ph: ci.ph || '', pm: ci.pm || '', mode: ci.mode || 'all' });
       });
     });
     var dups = findDups(flat), all = [], by = {};
@@ -514,7 +514,7 @@ const collaborationModule = (function () {
             st.healed = st.members.length;                                                         // phòng cũ / lệch số đếm → chủ phòng tự chỉnh lại
             rRef(id).update({ memberCount: st.members.length }).catch(function () {});
           }
-          st.checkins.forEach(function (c) { (co[c.uid] = co[c.uid] || {})[c.date] = { at: ms(c.at), note: c.note || '', late: !!c.late, hasPhoto: !!c.hasPhoto, ch: c.ch || '', ph: c.ph || '', pm: c.pm || '', mode: c.photoMode || 'all' }; });
+          st.checkins.forEach(function (c) { (co[c.uid] = co[c.uid] || {})[c.date] = { at: ms(c.at), sec: c.at && typeof c.at.seconds === 'number' ? c.at.seconds : 0, note: c.note || '', late: !!c.late, hasPhoto: !!c.hasPhoto, ch: c.ch || '', ph: c.ph || '', pm: c.pm || '', mode: c.photoMode || 'all' }; });
           cb({ id: id, name: r.name, code: r.code, ownerUid: r.ownerUid, deleting: !!r.deleting,
             joinOpen: r.joinOpen !== false, maxMembers: r.maxMembers || LEGACY_MAX_MEMBERS, invite: st.invite,
             cfg: { maxHearts: r.maxHearts || DEFAULT_CFG.maxHearts, regenDays: r.regenDays || DEFAULT_CFG.regenDays, cutoff: r.cutoff == null ? DEFAULT_CFG.cutoff : r.cutoff, challenge: r.challenge === true },
@@ -627,7 +627,7 @@ const collaborationModule = (function () {
   function freshState() {
     var f = {}; try { f = JSON.parse(localStorage.getItem(FORM_KEY)) || {}; } catch (e) {}
     return { root: null, store: null, view: 'lobby', roomId: '', rooms: null, room: null, calc: null, unwatch: null, timer: null, authUnsub: null, authReady: false,
-      tab: 'create', roomTab: 'today', arc: null, busy: false, dlg: '', toastT: null, lastDay: '', cam: null, photos: {}, photoView: null, photoList: null,
+      tab: 'create', roomTab: 'today', arc: null, busy: false, voting: false, dlg: '', toastT: null, lastDay: '', cam: null, photos: {}, photoView: null, photoList: null,
       form: { room: '', code: '', name: f.name || '', title: f.title || '', freq: f.freq || 'daily', target: f.target || '' },
       dlgForm: null, mg: null, confirm: null };
   }
@@ -1494,7 +1494,7 @@ const collaborationModule = (function () {
       if (!own && j.open && j.n) {
         var mv = j.votes[me], nx = pendingReviews(c, me).filter(function (q) { return !(q.uid === v.uid && q.date === v.date); })[0];
         x += '<div class="hub-collab-vote" role="group" aria-label="Duyệt ảnh">' + ['ok', 'sus'].map(function (k) {
-          return '<button type="button" class="hub-collab-btn is-' + k + '" data-act="vote" data-v="' + k + '" aria-pressed="' + (mv === k) + '">' + (k === 'ok' ? '✓ ' : '! ') + VOTE_TEXT[k] + '</button>';
+          return '<button type="button" class="hub-collab-btn is-' + k + '" data-act="vote" data-v="' + k + '" aria-pressed="' + (mv === k) + '"' + (S.voting ? ' disabled' : '') + '>' + (k === 'ok' ? '✓ ' : '! ') + VOTE_TEXT[k] + '</button>';
         }).join('') + '</div>' + (nx ? '<button type="button" class="hub-collab-btn is-ghost hub-collab-next"' + photoBtnAttrs(nx) + '>Ảnh tiếp theo ›</button>' : '');
       } else if (own) x += '<p class="hub-collab-muted">Đây là ảnh của bạn — các thành viên khác sẽ duyệt.</p>';
     }
@@ -1572,10 +1572,10 @@ const collaborationModule = (function () {
       S.room = room; recompute(); paint();
     });
   }
-  function openRoom(id) { S.view = 'room'; S.roomId = id; S.room = null; S.calc = null; S.roomTab = 'today'; S.arc = null; S.photoList = null; S.dlg = ''; S._dlgFocused = false; paint(); watchRoom(); }
+  function openRoom(id) { S.view = 'room'; S.roomId = id; S.room = null; S.calc = null; S.voting = false; S.roomTab = 'today'; S.arc = null; S.photoList = null; S.dlg = ''; S._dlgFocused = false; paint(); watchRoom(); }
   function closeRoom() {
     if (S.unwatch) { S.unwatch(); S.unwatch = null; }
-    S.view = 'lobby'; S.room = null; S.calc = null; S.dlg = ''; S._dlgFocused = false; loadRooms();
+    S.view = 'lobby'; S.room = null; S.calc = null; S.voting = false; S.dlg = ''; S._dlgFocused = false; loadRooms();
   }
   function init() {
     if (S.unwatch) { S.unwatch(); S.unwatch = null; }
@@ -1916,9 +1916,15 @@ const collaborationModule = (function () {
       S.photoView = { uid: uid, date: date, name: name }; S.dlg = 'photo'; paint();
     },
     vote: function (el) {
-      var v = el.getAttribute('data-v'), pv = S.photoView, it = pv && S.calc.by[pv.uid + '|' + pv.date];
-      if (!it || (v !== 'ok' && v !== 'sus')) return;
-      S.store.review(S.roomId, pv.uid, pv.date, v, it.sec).then(function () { toast(v === 'sus' ? 'Đã đánh dấu nghi ngờ.' : 'Đã đánh dấu hợp lệ.'); }, function (e) { toast(errMsg(e)); });
+      var v = el.getAttribute('data-v'), pv = S.photoView, it = pv && S.calc && S.calc.by[pv.uid + '|' + pv.date];
+      if (!it || S.voting || (v !== 'ok' && v !== 'sus')) return;
+      if (it.j && it.j.votes && it.j.votes[S.store.uid] === v) return;
+      S.voting = true; paint();
+      S.store.review(S.roomId, pv.uid, pv.date, v, it.sec).then(function () {
+        if (!S) return; S.voting = false; paint(); toast(v === 'sus' ? 'Đã đánh dấu nghi ngờ.' : 'Đã đánh dấu hợp lệ.');
+      }, function (e) {
+        if (!S) return; S.voting = false; paint(); toast(errMsg(e));
+      });
     },
     'photo-nav': function (el) {
       var list = S.photoList, v = S.photoView; if (!list || !list.length || !v) return;
@@ -1946,7 +1952,7 @@ const collaborationModule = (function () {
     },
     close: function () {
       if (S.confirm) { if (S.confirm.busy) return; S.dlg = S.confirm.back || ''; S.confirm = null; S._dlgFocused = false; paint(); return; }   // huỷ xác nhận → về hộp thoại trước
-      stopCamera(); S.cam = null; S.photoView = null; S.photoList = null; S.dlg = ''; S._dlgFocused = false; paint();
+      stopCamera(); S.cam = null; S.photoView = null; S.photoList = null; S.voting = false; S.dlg = ''; S._dlgFocused = false; paint();
     },
     'save-commit': function () {
       var f = S.dlgForm, m = mineNow(), today = S.calc.today, title = (f.title || '').trim();

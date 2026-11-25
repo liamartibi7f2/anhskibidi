@@ -1134,14 +1134,6 @@ const timeManagementModule = (function () {
                   '<p class="hub-tm-rm-lead">Let any AI draft the plan, then paste its answer into the Edit tab.</p>' +
                   '<ol class="hub-tm-rm-steps"><li><b>Describe</b> what you need below.</li><li><b>Copy</b> the prompt into ChatGPT, Claude or Gemini and add your syllabus at the end.</li><li><b>Paste</b> the answer into the Edit tab. Phases, times and tasks are recognised for you.</li></ol>' +
                   '<div class="hub-tm-field"><label for="tm-rm-ai-topic">Subject</label><input type="text" class="hub-tm-input" id="tm-rm-ai-topic" maxlength="120" placeholder="e.g. Civil Law: contracts, or Daily English dictation" autocomplete="off"></div>' +
-                  '<div class="hub-tm-field">' +
-                    '<label for="tm-rm-ai-tag-input">Prompt focus tags <em class="hub-tm-sb-opt">optional · guides AI wording only</em></label>' +
-                    '<div class="hub-tm-rm-ai-tags" id="tm-rm-ai-tags" role="group" aria-label="Prompt tags"></div>' +
-                    '<div class="hub-tm-rm-ai-tagadd">' +
-                      '<input type="text" class="hub-tm-input hub-tm-input--sm" id="tm-rm-ai-tag-input" maxlength="40" placeholder="Add custom tag (e.g. Exam prep, Listening)..." autocomplete="off">' +
-                      '<button type="button" class="hub-tm-btn hub-tm-btn--outline hub-tm-rm-ai-tagbtn" id="tm-rm-ai-tag-add">+ Add</button>' +
-                    '</div>' +
-                  '</div>' +
                   '<div class="hub-tm-field"><label for="tm-rm-ai-extra">Extra requirements <em class="hub-tm-sb-opt">optional</em></label><textarea class="hub-tm-input hub-tm-rm-ai-extra" id="tm-rm-ai-extra" rows="3" maxlength="600" placeholder="e.g. 15 min a day in phases 1-2 and 30 min in phases 3-4; Sundays at 11:30"></textarea></div>' +
                   '<div class="hub-tm-rm-trio">' +
                     '<div class="hub-tm-field"><label for="tm-rm-ai-days">Days</label><input type="number" class="hub-tm-input" id="tm-rm-ai-days" min="1" max="365" value="30"></div>' +
@@ -5224,7 +5216,7 @@ const timeManagementModule = (function () {
     ['Tuần 4 · BTTH ngoài hợp đồng', ['Khái niệm & căn cứ phát sinh BTTH ngoài hợp đồng', 'Nguyên tắc & năng lực chịu trách nhiệm bồi thường', 'BTTH do người của pháp nhân & nguồn nguy hiểm cao độ gây ra', 'Xác định thiệt hại & mức bồi thường', '*Ôn tập phần BTTH · tình huống tổng hợp']],
     ['Ngày 27–30 · Tổng hợp', ['*Hệ thống hóa toàn bộ kiến thức: sơ đồ tư duy', '*Làm đề / tình huống tổng hợp 1', '*Làm đề / tình huống tổng hợp 2 & sửa lỗi sai', '*Rà soát cuối & chốt bài']]
   ];
-  let _rm = { sel: 0, pickOn: '', scrolled: '', pg: -1, editId: null, aiTags: [], aiCustomTags: [], aiTagsTouched: false, skipDraft: [], findIdx: -1, findQ: '' };   // pg: window the person paged to (-1 = follow the selected day)
+  let _rm = { sel: 0, pickOn: '', scrolled: '', pg: -1, editId: null, skipDraft: [], findIdx: -1, findQ: '' };   // pg: window the person paged to (-1 = follow the selected day)
   const RM_TABS = ['edit', 'preview', 'ai', 'io'];
   let _rmTab = 'edit';
 
@@ -5932,15 +5924,11 @@ const timeManagementModule = (function () {
       return '<button type="button" class="hub-tm-tl-chip" data-rm-tag="' + _esc(t.id) + '" style="' + _tagStyle(t) + '" aria-pressed="' + (t.id === cur) + '"><span class="hub-tm-tag-dot"></span>' + _esc(t.label) + '</button>';
     }).join('');
   }
-  function _rmSetTag(id, syncAi) {
+  function _rmSetTag(id) {
     const tags = _allTags(), cur = tags.some(function (t) { return t.id === id; }) ? id : tags[0].id;
     _el('#tm-rm-tag').value = cur;
     _all('#tm-rm-tags [data-rm-tag]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-rm-tag') === cur)); });
-    if (syncAi && !_rm.aiTagsTouched) {
-      _rm.aiTags = [cur];
-      _rmRenderAiTags();
-      if (_rmPane('ai')) _rmRefreshPrompt();
-    }
+    if (_rmPane('ai')) _rmRefreshPrompt();
   }
   function _rmActiveSkips(start, dow) {
     const list = (_rm.skipDraft || []).slice().sort();
@@ -6137,48 +6125,9 @@ const timeManagementModule = (function () {
     if (p.errors.length || !p.days.length || !_isDateStr(_el('#tm-rm-start').value)) { box.innerHTML = '<p class="hub-tm-rm-empty">Fix the plan on the Edit tab to see the preview.</p>'; return; }
     box.innerHTML = _rmPreviewHtml(_rmDraft(p));
   }
-  function _rmSelectedAiTags() {
-    const sel = _rm.aiTags || [], custom = _rm.aiCustomTags || [];
-    const out = _allTags().filter(function (t) { return sel.indexOf(t.id) > -1; }).map(function (t) { return t.label; });
-    return out.concat(custom);
-  }
-  function _rmRenderAiTags() {
-    const box = _el('#tm-rm-ai-tags');
-    if (!box) return;
-    const sel = _rm.aiTags || [], custom = _rm.aiCustomTags || [];
-    const builtIn = _allTags().map(function (t) {
-      const on = sel.indexOf(t.id) > -1;
-      return '<button type="button" class="hub-tm-rm-aitag" data-rm-ai-tag="' + _esc(t.id) + '" style="--tm-c:' + _safeColor(t.color) + '" aria-pressed="' + on + '"><span class="hub-tm-tag-dot"></span><span>' + _esc(t.label) + '</span></button>';
-    }).join('');
-    const cust = custom.map(function (label, idx) {
-      return '<button type="button" class="hub-tm-rm-aitag hub-tm-rm-aitag--custom" data-rm-ai-ctag="' + idx + '" aria-pressed="true" title="Click to remove"><span>' + _esc(label) + '</span><span class="hub-tm-rm-aitag-x" aria-hidden="true">×</span></button>';
-    }).join('');
-    box.innerHTML = builtIn + cust;
-  }
-  function _rmAddCustomAiTag() {
-    const inp = _el('#tm-rm-ai-tag-input');
-    if (!inp) return;
-    const raw = (inp.value || '').split(','), tags = _allTags();
-    _rm.aiTags = _rm.aiTags || [];
-    _rm.aiCustomTags = _rm.aiCustomTags || [];
-    let changed = false;
-    raw.forEach(function (part) {
-      const label = part.trim().slice(0, 40);
-      if (!label) return;
-      const low = label.toLowerCase();
-      const match = tags.filter(function (t) { return t.label.toLowerCase() === low || t.id.toLowerCase() === low; })[0];
-      if (match) {
-        if (_rm.aiTags.indexOf(match.id) === -1) { _rm.aiTags.push(match.id); changed = true; }
-      } else if (!_rm.aiCustomTags.some(function (c) { return c.toLowerCase() === low; })) {
-        _rm.aiCustomTags.push(label);
-        changed = true;
-      }
-    });
-    inp.value = '';
-    if (changed) { _rmRenderAiTags(); _rmRefreshPrompt(); }
-  }
   function _rmPromptOpts() {
-    return { topic: _el('#tm-rm-ai-topic').value.trim(), tags: _rmSelectedAiTags(), extra: _el('#tm-rm-ai-extra').value.trim(), days: _el('#tm-rm-ai-days').value, phases: _el('#tm-rm-ai-phases').value, lang: _el('#tm-rm-ai-lang').value, time: _el('#tm-rm-time').value, dur: _el('#tm-rm-dur').value };
+    const tg = _tagById(_el('#tm-rm-tag').value);
+    return { topic: _el('#tm-rm-ai-topic').value.trim(), tags: tg ? [tg.label] : [], extra: _el('#tm-rm-ai-extra').value.trim(), days: _el('#tm-rm-ai-days').value, phases: _el('#tm-rm-ai-phases').value, lang: _el('#tm-rm-ai-lang').value, time: _el('#tm-rm-time').value, dur: _el('#tm-rm-dur').value };
   }
   function _rmRefreshPrompt() { _el('#tm-rm-prompt-view').value = _rmPrompt(_rmPromptOpts()); }
   function _rmShowTab(name) {
@@ -6189,7 +6138,7 @@ const timeManagementModule = (function () {
     });
     _rmTab = name;
     if (name === 'preview') _rmRenderPreview();
-    if (name === 'ai') { _rmRenderAiTags(); _rmRefreshPrompt(); }
+    if (name === 'ai') _rmRefreshPrompt();
   }
   /** Insert a ready-made line into the plan text and select the placeholder so it can be overtyped. */
   function _rmInsert(kind) {
@@ -6266,7 +6215,6 @@ const timeManagementModule = (function () {
     opts = opts && (opts.id || opts.spec) ? opts : {};
     const spec = opts.spec || null, r = opts.id ? _rmById(opts.id) : (spec ? null : _rmGet()), tags = _allTags();
     _rm.editId = r ? r.id : null;
-    _rm.aiTagsTouched = false;
     _rm.findIdx = -1; _rm.findQ = '';
     const findEl = _el('#tm-rm-find'); if (findEl) findEl.value = '';
     const tagOf = function (id, fb) { return tags.some(function (t) { return t.id === id; }) ? id : (tags.some(function (t) { return t.id === fb; }) ? fb : tags[0].id); };
@@ -6317,11 +6265,6 @@ const timeManagementModule = (function () {
     }
     const helpEl = _el('#tm-rm-help');
     if (helpEl) helpEl.open = !r;
-    _rm.aiCustomTags = [];
-    _rm.aiTags = [_el('#tm-rm-tag').value].filter(Boolean);
-    const aiTagInp = _el('#tm-rm-ai-tag-input');
-    if (aiTagInp) aiTagInp.value = '';
-    _rmRenderAiTags();
     _rmShowTab('edit');
     _rmValidate();
     _rmApplySkin();
@@ -6401,7 +6344,7 @@ const timeManagementModule = (function () {
         if (j.name) _el('#tm-rm-name').value = j.name;
         if (/^\d{1,2}:\d{2}$/.test(j.time || '')) _el('#tm-rm-time').value = _toTime(_toMins(j.time));
         if (j.dur) _rmSetDur(j.dur);
-        if (j.tagId && _tagById(j.tagId)) _rmSetTag(j.tagId, true);
+        if (j.tagId && _tagById(j.tagId)) _rmSetTag(j.tagId);
         if (j.dow) _rmSetDow(j.dow);
         _rmSetPlanText(_rmToText(j), 'Imported ' + name);
         return;
@@ -6675,7 +6618,7 @@ const timeManagementModule = (function () {
       durNum.addEventListener('change', function () { _rmSetDur(durNum.value); _rmValidate(); });
     }
     const tagsBox = _el('#tm-rm-tags');
-    if (tagsBox) tagsBox.addEventListener('click', function (e) { const b = e.target.closest('[data-rm-tag]'); if (b) { _rmSetTag(b.getAttribute('data-rm-tag'), true); _rmSyncUi(); } });
+    if (tagsBox) tagsBox.addEventListener('click', function (e) { const b = e.target.closest('[data-rm-tag]'); if (b) { _rmSetTag(b.getAttribute('data-rm-tag')); _rmSyncUi(); } });
     const skipClear = _el('#tm-rm-skip-clear');
     if (skipClear) skipClear.addEventListener('click', function () {
       const prev = (_rm.skipDraft || []).slice();
@@ -6767,34 +6710,6 @@ const timeManagementModule = (function () {
 
     // AI prompt
     ['#tm-rm-ai-topic', '#tm-rm-ai-extra', '#tm-rm-ai-days', '#tm-rm-ai-phases', '#tm-rm-ai-lang'].forEach(function (s) { _el(s).addEventListener('input', _rmRefreshPrompt); });
-    const aiTagsBox = _el('#tm-rm-ai-tags');
-    if (aiTagsBox) {
-      aiTagsBox.addEventListener('click', function (e) {
-        const b = e.target.closest('[data-rm-ai-tag]');
-        if (b) {
-          const id = b.getAttribute('data-rm-ai-tag');
-          _rm.aiTagsTouched = true;
-          _rm.aiTags = _rm.aiTags || [];
-          const idx = _rm.aiTags.indexOf(id);
-          if (idx > -1) _rm.aiTags.splice(idx, 1); else _rm.aiTags.push(id);
-          _rmRenderAiTags(); _rmRefreshPrompt();
-          return;
-        }
-        const cb = e.target.closest('[data-rm-ai-ctag]');
-        if (cb) {
-          const ci = parseInt(cb.getAttribute('data-rm-ai-ctag'), 10);
-          if (_rm.aiCustomTags && ci >= 0 && ci < _rm.aiCustomTags.length) {
-            _rm.aiCustomTags.splice(ci, 1);
-            _rmRenderAiTags(); _rmRefreshPrompt();
-          }
-        }
-      });
-    }
-    const aiTagAdd = _el('#tm-rm-ai-tag-add'), aiTagInput = _el('#tm-rm-ai-tag-input');
-    if (aiTagAdd) aiTagAdd.addEventListener('click', _rmAddCustomAiTag);
-    if (aiTagInput) aiTagInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); _rmAddCustomAiTag(); }
-    });
     _el('#tm-rm-ai-copy').addEventListener('click', function () {
       _rmCopy(_rmPrompt(_rmPromptOpts()), 'Prompt copied — paste it into your AI, add your syllabus, then paste its answer into the Edit tab.');
     });

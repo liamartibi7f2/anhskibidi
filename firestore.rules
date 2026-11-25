@@ -177,21 +177,28 @@ service cloud.firestore {
     //   - ref = giây của check-in.at → phiếu cũ không dính sang lần check-in mới (xoá rồi chụp lại)
     //   - chỉ duyệt được ảnh mà mình ĐỌC được (còn hạn, nằm trong viewers) — không thể duyệt thứ mình không thấy
     //   - trong 72 giờ kể từ check-in; hết hạn thì chốt, ai cũng không đổi được nữa
+    function validReviewTarget(ck, ph, ref) {
+      return ck.uid != request.auth.uid
+          && ck.hasPhoto == true
+          && photoReadable(ph)
+          && ck.at is timestamp
+          && ref * 1000 <= ck.at.toMillis()
+          && ck.at.toMillis() < (ref + 1) * 1000
+          && request.time < ck.at + duration.value(3, 'd');
+    }
     function validReview(roomId, id) {
       let d = request.resource.data;
-      let ck = get(/databases/$(db)/documents/rooms/$(roomId)/checkins/$(d.target)).data;
-      let ph = get(/databases/$(db)/documents/rooms/$(roomId)/photos/$(d.target)).data;
+      let ckPath = /databases/$(db)/documents/rooms/$(roomId)/checkins/$(d.target);
+      let phPath = /databases/$(db)/documents/rooms/$(roomId)/photos/$(d.target);
       return d.keys().hasOnly(['target', 'by', 'v', 'ref', 'at'])
-          && d.target is string && d.target.size() <= 80
+          && d.target is string && d.target.size() >= 1 && d.target.size() <= 80
           && d.by == request.auth.uid
           && id == d.target + '_' + d.by
           && d.v in ['ok', 'sus']
-          && ck.uid != request.auth.uid
-          && ck.hasPhoto == true
-          && photoReadable(ph)
-          && d.ref == ck.at.seconds()
+          && d.ref is int && d.ref >= 1000000000 && d.ref <= 9999999999
           && d.at == request.time
-          && request.time < ck.at + duration.value(3, 'd');
+          && exists(ckPath) && exists(phPath)
+          && validReviewTarget(get(ckPath).data, get(phPath).data, d.ref);
     }
 
     function validPhotoDays(d) {
