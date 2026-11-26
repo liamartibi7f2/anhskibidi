@@ -159,15 +159,18 @@ const collaborationModule = (function () {
   }
   /** Bộ chọn avatar trong Cài đặt (bấm là lưu ngay). */
   function avatarPickerHtml(cur, name) {
-    var ini = esc(initialOf(name)), opts = [{ id: '', label: 'Chữ cái' }].concat(AVATARS);
-    return '<h4 class="hub-collab-h4">Avatar của bạn</h4>' +
+    var ini = esc(initialOf(name)), curOpt = avatarById(cur), curLabel = curOpt ? curOpt.label : 'Chữ cái';
+    var opts = [{ id: '', label: 'Chữ cái' }].concat(AVATARS);
+    return '<section class="hub-collab-dcard">' +
+      '<div class="hub-collab-dcard-head"><h4>Avatar của bạn</h4><span class="hub-collab-dcard-meta">Đang dùng: ' + esc(curLabel) + '</span></div>' +
       '<div class="hub-collab-avpick" role="group" aria-label="Chọn avatar">' + opts.map(function (o) {
         var on = o.id === cur;
         return '<button type="button" class="hub-collab-avopt' + (on ? ' is-on' : '') + '" aria-pressed="' + on + '" data-act="pick-avatar" data-av="' + o.id + '" title="' + esc(o.label) + '">' +
           '<span class="hub-collab-avopt-pic' + (o.id ? '' : ' is-letter') + '">' + (o.id ? '<img src="' + o.src + '" alt="" draggable="false">' : ini) + '</span>' +
           '<span class="hub-collab-avopt-name">' + esc(o.label) + '</span></button>';
       }).join('') + '</div>' +
-      '<p class="hub-collab-muted">Cả phòng sẽ thấy avatar này thay cho chữ cái đầu tên. Đổi một lần, áp dụng cho mọi phòng của bạn.</p>';
+      '<p class="hub-collab-dcard-hint">Hiển thị thay chữ cái đầu tên, áp dụng cho mọi phòng của bạn.</p>' +
+      '</section>';
   }
   function hash(str) { var h = 5381; for (var i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0; return Math.abs(h); }
   function genCode() {
@@ -679,7 +682,7 @@ const collaborationModule = (function () {
   function freshState() {
     var f = {}; try { f = JSON.parse(localStorage.getItem(FORM_KEY)) || {}; } catch (e) {}
     return { root: null, store: null, view: 'lobby', roomId: '', rooms: null, room: null, calc: null, unwatch: null, timer: null, authUnsub: null, authReady: false,
-      tab: 'create', roomTab: 'today', arc: null, busy: false, voting: false, dlg: '', toastT: null, lastDay: '', cam: null, photos: {}, photoView: null, photoList: null,
+      tab: 'create', roomTab: 'today', arc: null, busy: false, voting: false, dlg: '', dlgTab: '', toastT: null, lastDay: '', cam: null, photos: {}, photoView: null, photoList: null,
       form: { room: '', code: '', name: f.name || '', title: f.title || '', freq: f.freq || 'daily', target: f.target || '' },
       dlgForm: null, mg: null, confirm: null };
   }
@@ -1372,29 +1375,71 @@ const collaborationModule = (function () {
     return '<section class="hub-collab-arc">' + bar + (!wMode && arc.mode !== 'month' ? arcCalendarHtml(room, c, arc) : '') + filters + body + '</section>';
   }
   function dialogHtml(room, mine, isOwner, today) {
-    var f = S.dlgForm, cfg = room.cfg;
+    var f = S.dlgForm, cfg = room.cfg, tab = S.dlgTab === 'rules' ? 'rules' : 'personal';
+    var nextDay = fmtDay(addDays(today, 1));
     var hist = (mine.commits || []).slice().reverse().map(function (c) { return '<li><time>từ ' + fmtDay(c.from) + '</time><span>' + commitLine(c) + '</span></li>'; }).join('');
-    return '<div class="hub-collab-scrim" data-act="close"></div><div class="hub-collab-dialog" role="dialog" aria-modal="true" aria-labelledby="hc-dlg-title"><div class="hub-collab-dialog-head"><h3 id="hc-dlg-title">Cài đặt phòng</h3>' +
-      '<button type="button" class="hub-collab-btn is-ghost" data-act="close" aria-label="Đóng">✕</button></div><div class="hub-collab-form">' +
-      avatarPickerHtml(f.avatar || '', mine.name) +
-      '<h4 class="hub-collab-h4">Cam kết của bạn</h4>' +
-      field('Cam kết', '<input class="hub-collab-input" data-d="title" maxlength="80" value="' + esc(f.title) + '">') +
-      '<div class="hub-collab-row2">' + field('Tần suất', '<select class="hub-collab-input" data-d="freq">' + Object.keys(FREQ).map(function (k) { return '<option value="' + k + '"' + (f.freq === k ? ' selected' : '') + '>' + FREQ[k] + '</option>'; }).join('') + '</select>') +
-        field('Trước giờ', '<input type="time" class="hub-collab-input" data-d="target" value="' + esc(f.target) + '">') + '</div>' +
-      '<p class="hub-collab-muted">Thay đổi có hiệu lực từ <b>ngày mai</b> (' + fmtDay(addDays(today, 1)) + '); những ngày đã qua giữ nguyên cam kết cũ.</p>' +
-      '<button type="button" class="hub-collab-btn is-primary" data-act="save-commit">Lưu cam kết</button>' +
-      (hist ? '<ul class="hub-collab-feed hub-collab-feed--hist">' + hist + '</ul>' : '') +
-      (isOwner ? '<h4 class="hub-collab-h4">Luật của phòng</h4><div class="hub-collab-row2">' +
-        field('Số tim tối đa', '<select class="hub-collab-input" data-d="max">' + HEART_CHOICES.map(function (n) { return '<option value="' + n + '"' + (f.max === n ? ' selected' : '') + '>' + n + ' tim</option>'; }).join('') + '</select>') +
-        field('Hồi 1 tim sau', '<select class="hub-collab-input" data-d="regen">' + REGEN_CHOICES.map(function (n) { return '<option value="' + n + '"' + (f.regen === n ? ' selected' : '') + '>' + n + ' ngày liền</option>'; }).join('') + '</select>') + '</div>' +
-        field('Mã thử thách mỗi lần chụp', '<select class="hub-collab-input" data-d="chal"><option value="on"' + (f.chal === 'on' ? ' selected' : '') + '>Bật — số ngẫu nhiên được đóng dấu vào ảnh</option><option value="off"' + (f.chal === 'off' ? ' selected' : '') + '>Tắt</option></select>') +
-        '<p class="hub-collab-muted">Đổi luật sẽ tính lại tim và streak của cả phòng theo toàn bộ lịch sử.</p><button type="button" class="hub-collab-btn" data-act="save-cfg">Lưu luật</button>' : '') +
-      '<h4 class="hub-collab-h4">Duyệt ảnh chéo</h4><p class="hub-collab-muted">Thành viên khác bấm “Hợp lệ” hoặc “Nghi ngờ” trên ảnh check-in trong vòng 72 giờ. Quá nửa người khác nghi ngờ thì check-in bị hủy và tính như lỡ ngày; phòng 2 người thì người còn lại quyết. Ảnh gần như trùng một ảnh cũ sẽ được báo cho cả phòng.</p>' +
-      (isOwner
-        ? '<h4 class="hub-collab-h4">Rời phòng</h4><p class="hub-collab-muted">Chủ phòng không thể rời phòng. Hãy chuyển quyền cho người khác hoặc xoá phòng trong mục <b>Quản lý</b>.</p>' +
-          '<button type="button" class="hub-collab-btn" data-act="dlg" data-dlg="manage">Mở Quản lý phòng</button>'
-        : '<h4 class="hub-collab-h4">Rời phòng</h4><button type="button" class="hub-collab-btn is-danger" data-act="leave">Rời phòng này</button>') +
-      '</div></div>';
+    var personalBody = avatarPickerHtml(f.avatar || '', mine.name) +
+      '<section class="hub-collab-dcard">' +
+        '<div class="hub-collab-dcard-head"><h4>Cam kết của bạn</h4><span class="hub-collab-dcard-meta">Hiệu lực từ ' + esc(nextDay) + '</span></div>' +
+        '<div class="hub-collab-form">' +
+          field('Cam kết', '<input class="hub-collab-input" data-d="title" maxlength="80" value="' + esc(f.title) + '">') +
+          '<div class="hub-collab-row2">' +
+            field('Tần suất', '<select class="hub-collab-input" data-d="freq">' + Object.keys(FREQ).map(function (k) { return '<option value="' + k + '"' + (f.freq === k ? ' selected' : '') + '>' + FREQ[k] + '</option>'; }).join('') + '</select>') +
+            field('Trước giờ', '<input type="time" class="hub-collab-input" data-d="target" value="' + esc(f.target) + '">') +
+          '</div>' +
+        '</div>' +
+        '<div class="hub-collab-dcard-foot"><span class="hub-collab-dcard-hint">Những ngày đã qua giữ nguyên cam kết cũ.</span>' +
+          '<button type="button" class="hub-collab-btn is-primary" data-act="save-commit">Lưu cam kết</button></div>' +
+        (hist ? '<details class="hub-collab-fold"><summary>Lịch sử cam kết (' + (mine.commits || []).length + ')</summary><ul class="hub-collab-feed hub-collab-feed--hist">' + hist + '</ul></details>' : '') +
+      '</section>' +
+      (!isOwner
+        ? '<section class="hub-collab-dcard is-danger-row">' +
+            '<div><h4>Rời phòng</h4><p class="hub-collab-dcard-hint">Rời khỏi phòng này? Lịch sử check-in vẫn được giữ.</p></div>' +
+            '<button type="button" class="hub-collab-btn is-danger" data-act="leave">Rời phòng</button>' +
+          '</section>'
+        : '');
+    var rulesCfgCard = isOwner
+      ? '<section class="hub-collab-dcard">' +
+          '<div class="hub-collab-dcard-head"><h4>Luật của phòng</h4><span class="hub-collab-dcard-meta">Chủ phòng</span></div>' +
+          '<div class="hub-collab-form">' +
+            '<div class="hub-collab-row2">' +
+              field('Số tim tối đa', '<select class="hub-collab-input" data-d="max">' + HEART_CHOICES.map(function (n) { return '<option value="' + n + '"' + (f.max === n ? ' selected' : '') + '>' + n + ' tim</option>'; }).join('') + '</select>') +
+              field('Hồi 1 tim sau', '<select class="hub-collab-input" data-d="regen">' + REGEN_CHOICES.map(function (n) { return '<option value="' + n + '"' + (f.regen === n ? ' selected' : '') + '>' + n + ' ngày liền</option>'; }).join('') + '</select>') +
+            '</div>' +
+            field('Mã thử thách mỗi lần chụp', '<select class="hub-collab-input" data-d="chal"><option value="on"' + (f.chal === 'on' ? ' selected' : '') + '>Bật — số ngẫu nhiên được đóng dấu vào ảnh</option><option value="off"' + (f.chal === 'off' ? ' selected' : '') + '>Tắt</option></select>') +
+          '</div>' +
+          '<div class="hub-collab-dcard-foot"><span class="hub-collab-dcard-hint">Đổi luật sẽ tính lại tim và streak theo toàn bộ lịch sử.</span>' +
+            '<button type="button" class="hub-collab-btn is-primary" data-act="save-cfg">Lưu luật</button></div>' +
+        '</section>'
+      : '<section class="hub-collab-dcard">' +
+          '<div class="hub-collab-dcard-head"><h4>Luật phòng hiện tại</h4><span class="hub-collab-dcard-meta">Áp dụng chung</span></div>' +
+          '<div class="hub-collab-rule-grid">' +
+            '<div class="hub-collab-rule-item"><b>' + cfg.maxHearts + ' tim tối đa</b><span>Mỗi ngày lỡ trừ 1 tim</span></div>' +
+            '<div class="hub-collab-rule-item"><b>Hồi 1 tim / ' + cfg.regenDays + ' ngày</b><span>Check-in liên tiếp để hồi tim</span></div>' +
+            '<div class="hub-collab-rule-item"><b>' + (cfg.challenge ? 'Mã thử thách: Bật' : 'Mã thử thách: Tắt') + '</b><span>Đóng dấu số ngẫu nhiên vào ảnh</span></div>' +
+          '</div>' +
+        '</section>';
+    var reviewCard = '<section class="hub-collab-dcard">' +
+      '<div class="hub-collab-dcard-head"><h4>Duyệt ảnh chéo</h4><span class="hub-collab-dcard-meta">Cơ chế xác thực</span></div>' +
+      '<div class="hub-collab-rule-grid">' +
+        '<div class="hub-collab-rule-item"><b>72 giờ</b><span>Thời hạn thành viên bấm Hợp lệ / Nghi ngờ</span></div>' +
+        '<div class="hub-collab-rule-item"><b>&gt; 50% nghi ngờ</b><span>Check-in bị huỷ (phòng 2 người: người còn lại quyết)</span></div>' +
+        '<div class="hub-collab-rule-item"><b>Chống trùng ảnh</b><span>Tự động cảnh báo cả phòng nếu ảnh giống ảnh cũ</span></div>' +
+      '</div></section>';
+    var ownerLink = isOwner
+      ? '<section class="hub-collab-dcard is-link-row">' +
+          '<span class="hub-collab-dcard-hint">Chủ phòng muốn đổi mã mời, chuyển quyền hoặc xoá phòng?</span>' +
+          '<button type="button" class="hub-collab-btn" data-act="dlg" data-dlg="manage">Mở Quản lý phòng</button>' +
+        '</section>'
+      : '';
+    return '<div class="hub-collab-scrim" data-act="close"></div><div class="hub-collab-dialog hub-collab-dialog--settings" role="dialog" aria-modal="true" aria-labelledby="hc-dlg-title">' +
+      '<div class="hub-collab-dialog-head"><div class="hub-collab-dialog-title"><h3 id="hc-dlg-title">Cài đặt phòng</h3><span class="hub-collab-dialog-sub">' + esc(room.name) + '</span></div>' +
+        '<button type="button" class="hub-collab-btn is-ghost" data-act="close" aria-label="Đóng">✕</button></div>' +
+      '<div class="hub-collab-dtabs" role="tablist">' +
+        '<button type="button" role="tab" aria-selected="' + (tab === 'personal') + '" data-act="dlg-tab" data-tab="personal">Cá nhân</button>' +
+        '<button type="button" role="tab" aria-selected="' + (tab === 'rules') + '" data-act="dlg-tab" data-tab="rules">Luật &amp; Duyệt ảnh</button>' +
+      '</div>' +
+      '<div class="hub-collab-form hub-collab-dstack">' + (tab === 'personal' ? personalBody : rulesCfgCard + reviewCard + ownerLink) + '</div></div>';
   }
 
   /* ───────────── quản lý phòng: mã mời, thành viên, thiết lập, xoá ───────────── */
@@ -1407,7 +1452,7 @@ const collaborationModule = (function () {
   }
   function manageHtml(room, isOwner) {
     var me = S.store.uid, now = Date.now(), f = S.mg || { name: room.name, max: room.maxMembers, expiry: DEFAULT_EXPIRY }, n = room.members.length;
-    var iv = inviteState(room, now), cap = room.maxMembers;
+    var iv = inviteState(room, now), cap = room.maxMembers, tab = isOwner && S.dlgTab === 'room' ? 'room' : 'members';
     var members = room.members.slice().sort(function (a, b) {
       return (a.uid === room.ownerUid ? -1 : b.uid === room.ownerUid ? 1 : 0) || ((a.joinedAt || 0) - (b.joinedAt || 0)) || (a.name < b.name ? -1 : 1);
     });
@@ -1417,35 +1462,54 @@ const collaborationModule = (function () {
         '<div class="hub-collab-mrow-main"><b>' + esc(m.name) + '</b><span class="hub-collab-mrow-tags">' +
           (owner ? '<span class="hub-collab-role is-owner">Chủ phòng</span>' : '') + (isMe ? '<span class="hub-collab-me-tag">bạn</span>' : '') +
           (m.joinedAt ? '<span class="hub-collab-muted">vào ' + fmtDay(ymd(new Date(m.joinedAt))) + '</span>' : '') + '</span></div>' +
-        (isOwner && !isMe ? '<div class="hub-collab-mrow-act"><button type="button" class="hub-collab-btn" data-act="ask-transfer" data-uid="' + esc(m.uid) + '">Chuyển chủ phòng</button>' +
+        (isOwner && !isMe ? '<div class="hub-collab-mrow-act"><button type="button" class="hub-collab-btn" data-act="ask-transfer" data-uid="' + esc(m.uid) + '" title="Chuyển quyền chủ phòng">Chuyển quyền</button>' +
           '<button type="button" class="hub-collab-btn is-danger" data-act="ask-kick" data-uid="' + esc(m.uid) + '">Mời ra</button></div>' : '') + '</li>';
     }).join('');
     var expSel = '<select class="hub-collab-input" data-m="expiry">' + EXPIRY.map(function (e) { return '<option value="' + e[0] + '"' + (f.expiry === e[0] ? ' selected' : '') + '>' + e[1] + '</option>'; }).join('') + '</select>';
     var ownerCtl = isOwner
       ? '<div class="hub-collab-row2 hub-collab-invctl">' + field('Hiệu lực của mã', expSel) +
-          '<div class="hub-collab-invbtns"><button type="button" class="hub-collab-btn" data-act="inv-expiry">Áp dụng cho mã này</button><button type="button" class="hub-collab-btn" data-act="inv-regen">Đổi mã mới</button></div></div>' +
+          '<div class="hub-collab-invbtns"><button type="button" class="hub-collab-btn" data-act="inv-expiry">Áp dụng</button><button type="button" class="hub-collab-btn" data-act="inv-regen">Đổi mã mới</button></div></div>' +
         '<div class="hub-collab-switch"><div><b>' + (room.joinOpen ? 'Đang mở cho người mới' : 'Đang khoá') + '</b><span class="hub-collab-muted">' +
           (room.joinOpen ? 'Ai có mã còn hạn đều vào được, tối đa ' + cap + ' người.' : 'Không ai vào được bằng mã, kể cả mã còn hạn.') + '</span></div>' +
           '<button type="button" class="hub-collab-btn" data-act="inv-lock">' + (room.joinOpen ? 'Khoá phòng' : 'Mở lại') + '</button></div>'
       : '';
-    var info = isOwner
-      ? '<h4 class="hub-collab-h4">Thiết lập phòng</h4><div class="hub-collab-row2">' +
-          field('Tên phòng', '<input class="hub-collab-input" data-m="name" maxlength="40" value="' + esc(f.name) + '">') +
-          field('Số người tối đa', '<select class="hub-collab-input" data-m="max">' + MAX_CHOICES.filter(function (x) { return x >= n; }).map(function (x) { return '<option value="' + x + '"' + (f.max === x ? ' selected' : '') + '>' + x + ' người</option>'; }).join('') + '</select>') + '</div>' +
-          '<button type="button" class="hub-collab-btn" data-act="save-info">Lưu thiết lập</button>'
+    var membersTab = '<section class="hub-collab-dcard">' +
+        '<div class="hub-collab-dcard-head"><h4>Mã mời tham gia</h4><span class="hub-collab-status-dot is-' + iv.kind + '">' + (room.joinOpen ? 'Đang mở' : 'Đang khoá') + '</span></div>' +
+        '<div class="hub-collab-invite"><div class="hub-collab-invite-code"><code>' + esc(room.code) + '</code>' +
+          '<button type="button" class="hub-collab-btn" data-act="copy">Chép mã</button></div>' +
+          '<p class="hub-collab-invstate is-' + iv.kind + '" data-icon="' + esc(iv.icon) + '">' + esc(iv.text) + '</p>' + ownerCtl + '</div>' +
+      '</section>' +
+      '<section class="hub-collab-dcard">' +
+        '<div class="hub-collab-dcard-head"><h4>Thành viên</h4><span class="hub-collab-dcard-meta">' + n + ' / ' + cap + '</span></div>' +
+        '<ul class="hub-collab-mlist">' + rows + '</ul>' +
+      '</section>';
+    var roomTab = isOwner
+      ? '<section class="hub-collab-dcard">' +
+          '<div class="hub-collab-dcard-head"><h4>Thông tin &amp; giới hạn</h4><span class="hub-collab-dcard-meta">' + n + '/' + cap + ' chỗ</span></div>' +
+          '<div class="hub-collab-row2">' +
+            field('Tên phòng', '<input class="hub-collab-input" data-m="name" maxlength="40" value="' + esc(f.name) + '">') +
+            field('Số người tối đa', '<select class="hub-collab-input" data-m="max">' + MAX_CHOICES.filter(function (x) { return x >= n; }).map(function (x) { return '<option value="' + x + '"' + (f.max === x ? ' selected' : '') + '>' + x + ' người</option>'; }).join('') + '</select>') +
+          '</div>' +
+          '<div class="hub-collab-dcard-foot"><span class="hub-collab-dcard-hint">Giới hạn tối đa không thể nhỏ hơn số thành viên hiện tại.</span>' +
+            '<button type="button" class="hub-collab-btn is-primary" data-act="save-info">Lưu thiết lập</button></div>' +
+        '</section>' +
+        '<section class="hub-collab-dcard is-danger">' +
+          '<div class="hub-collab-dcard-head"><h4>Vùng nguy hiểm</h4><span class="hub-collab-dcard-meta">Không thể hoàn tác</span></div>' +
+          '<div class="hub-collab-danger"><p class="hub-collab-muted">Chủ phòng không thể rời phòng: hãy chuyển quyền cho người khác ở tab Thành viên, hoặc xoá hẳn phòng (mọi check-in và ảnh sẽ mất).</p>' +
+            '<button type="button" class="hub-collab-btn is-danger" data-act="ask-delete">Xoá phòng…</button></div>' +
+        '</section>'
       : '';
-    var danger = isOwner
-      ? '<h4 class="hub-collab-h4">Vùng nguy hiểm</h4><div class="hub-collab-danger"><p class="hub-collab-muted">Chủ phòng không thể rời phòng: hãy chuyển quyền cho người khác, hoặc xoá hẳn phòng (mọi check-in và ảnh sẽ mất).</p>' +
-        '<button type="button" class="hub-collab-btn is-danger" data-act="ask-delete">Xoá phòng…</button></div>'
+    var tabs = isOwner
+      ? '<div class="hub-collab-dtabs" role="tablist">' +
+          '<button type="button" role="tab" aria-selected="' + (tab === 'members') + '" data-act="dlg-tab" data-tab="members">Mã mời &amp; Thành viên</button>' +
+          '<button type="button" role="tab" aria-selected="' + (tab === 'room') + '" data-act="dlg-tab" data-tab="room">Thiết lập &amp; Nguy hiểm</button>' +
+        '</div>'
       : '';
     return '<div class="hub-collab-scrim" data-act="close"></div><div class="hub-collab-dialog hub-collab-dialog--wide" role="dialog" aria-modal="true" aria-labelledby="hc-dlg-title" tabindex="-1">' +
-      '<div class="hub-collab-dialog-head"><h3 id="hc-dlg-title">' + (isOwner ? 'Quản lý phòng' : 'Thành viên &amp; mã mời') + '</h3>' +
-        '<button type="button" class="hub-collab-btn is-ghost" data-act="close" aria-label="Đóng">✕</button></div><div class="hub-collab-form">' +
-      '<h4 class="hub-collab-h4">Mã mời</h4><div class="hub-collab-invite"><div class="hub-collab-invite-code"><code>' + esc(room.code) + '</code>' +
-        '<button type="button" class="hub-collab-btn" data-act="copy">Chép mã</button></div>' +
-        '<p class="hub-collab-invstate is-' + iv.kind + '" data-icon="' + esc(iv.icon) + '">' + esc(iv.text) + '</p>' + ownerCtl + '</div>' +
-      '<h4 class="hub-collab-h4">Thành viên · ' + n + ' / ' + cap + '</h4><ul class="hub-collab-mlist">' + rows + '</ul>' +
-      info + danger + '</div></div>';
+      '<div class="hub-collab-dialog-head"><div class="hub-collab-dialog-title"><h3 id="hc-dlg-title">' + (isOwner ? 'Quản lý phòng' : 'Thành viên &amp; mã mời') + '</h3>' +
+        '<span class="hub-collab-dialog-sub">' + esc(room.name) + ' · ' + n + '/' + cap + ' thành viên · ' + (room.joinOpen ? 'Đang mở' : 'Đang khoá') + '</span></div>' +
+        '<button type="button" class="hub-collab-btn is-ghost" data-act="close" aria-label="Đóng">✕</button></div>' +
+      tabs + '<div class="hub-collab-form hub-collab-dstack">' + (tab === 'room' ? roomTab : membersTab) + '</div></div>';
   }
   function confirmReady() { var c = S.confirm; return !!c && (!c.need || String(c.typed || '').trim().toLowerCase() === String(c.need).trim().toLowerCase()); }
   function confirmHtml() {
@@ -1569,7 +1633,7 @@ const collaborationModule = (function () {
     if (!el || !S || !S.root || el === S.root || !S.root.contains(el)) return '';
     if (el.id) return '#' + el.id;
     var sel = '';
-    ['data-act', 'data-av', 'data-v', 'data-uid', 'data-date', 'data-d', 'data-m', 'data-x', 'data-c', 'data-f', 'data-arc', 'data-id'].forEach(function (n) { var x = el.getAttribute && el.getAttribute(n); if (x != null) sel += '[' + n + '="' + String(x).replace(/"/g, '\\"') + '"]'; });
+    ['data-act', 'data-av', 'data-v', 'data-uid', 'data-date', 'data-d', 'data-m', 'data-x', 'data-c', 'data-f', 'data-arc', 'data-tab', 'data-id'].forEach(function (n) { var x = el.getAttribute && el.getAttribute(n); if (x != null) sel += '[' + n + '="' + String(x).replace(/"/g, '\\"') + '"]'; });
     return sel;
   }
   function paint() {
@@ -1998,14 +2062,18 @@ const collaborationModule = (function () {
     nudge: function (el) { guard(S.store.nudge(S.roomId, el.getAttribute('data-uid'), S.calc.today)).then(function () { toast('Đã nhắc bạn ấy.'); }); },
     dlg: function (el) {
       var m = mineNow(), c = curCommit(m, S.calc.today), kind = el && el.getAttribute('data-dlg') === 'manage' ? 'manage' : 'settings';
-      S.dlg = kind; S._dlgFocused = false;
+      S.dlg = kind; S.dlgTab = ''; S._dlgFocused = false;
       S.dlgForm = { avatar: (m && m.avatar) || '', title: c.title, freq: c.freq, target: c.target || '', max: S.room.cfg.maxHearts, regen: S.room.cfg.regenDays, chal: S.room.cfg.challenge ? 'on' : 'off' };
       S.mg = { name: S.room.name, max: S.room.maxMembers, expiry: DEFAULT_EXPIRY };
       paint();
     },
+    'dlg-tab': function (el) {
+      S.dlgTab = (el && el.getAttribute('data-tab')) || '';
+      paint();
+    },
     close: function () {
       if (S.confirm) { if (S.confirm.busy) return; S.dlg = S.confirm.back || ''; S.confirm = null; S._dlgFocused = false; paint(); return; }   // huỷ xác nhận → về hộp thoại trước
-      stopCamera(); S.cam = null; S.photoView = null; S.photoList = null; S.voting = false; S.dlg = ''; S._dlgFocused = false; paint();
+      stopCamera(); S.cam = null; S.photoView = null; S.photoList = null; S.voting = false; S.dlg = ''; S.dlgTab = ''; S._dlgFocused = false; paint();
     },
     'save-commit': function () {
       var f = S.dlgForm, m = mineNow(), today = S.calc.today, title = (f.title || '').trim();
