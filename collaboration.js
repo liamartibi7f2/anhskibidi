@@ -1019,15 +1019,18 @@ const collaborationModule = (function () {
       ? '<div class="hub-collab-qturn" role="status"><span>Đến lượt bạn ra đề cho ngày <b>' + fmtDay(turn.date) + '</b> (' + dayName(turn.date) + ').</span>' +
         '<button type="button" class="hub-collab-btn is-primary" data-act="quest-open" data-date="' + esc(turn.date) + '">Ra đề ngay</button></div>'
       : '';
-    var rows = qm.plan.map(function (p) {
+    var plan = qm.plan.filter(Boolean), setN = plan.filter(function (p) { return !!p.doc; }).length;
+    var pips = plan.map(function (p) { return '<i class="' + (p.doc ? 'is-set' : '') + (p.setter === me ? ' is-mine' : '') + '"></i>'; }).join('');
+    var rows = qm.plan.map(function (p, i) {
       if (!p) return '';
       var w = memberByUid(p.setter), mine = p.setter === me, mineDoc = (room.quests || []).filter(function (x) { return x.date === p.date && x.by === me; })[0];
       var canOpen = !p.locked && (mine || !!mineDoc || (p.date === c.today && p.cands.indexOf(me) > -1));
       var label = mineDoc ? (mineDoc.pass ? 'Đã nhường' : 'Sửa') : 'Ra đề';
-      return '<li class="hub-collab-qrow' + (mine ? ' is-mine' : '') + (p.doc ? ' is-set' : '') + '">' +
-        '<span class="hub-collab-qrow-d"><b>' + DOW_SHORT[parseYmd(p.date).getDay()] + '</b> ' + fmtDay(p.date) + '</span>' +
-        '<span class="hub-collab-qrow-who">' + (w ? avatarHtml(w, 'is-sm') + '<i>' + esc(w.name) + (mine ? ' (bạn)' : '') + '</i>' : '<i>—</i>') + '</span>' +
-        '<span class="hub-collab-qrow-t">' + (p.doc ? '✦ ' + esc(p.doc.title) : 'Chưa có đề — sẽ dùng đề dự phòng') + '</span>' +
+      return '<li class="hub-collab-qrow' + (mine ? ' is-mine' : '') + (p.doc ? ' is-set' : ' is-fallback') + (i === 0 ? ' is-next' : '') + '">' +
+        '<span class="hub-collab-qrow-d"><b>' + DOW_SHORT[parseYmd(p.date).getDay()] + '</b><span>' + fmtDay(p.date) + '</span></span>' +
+        '<span class="hub-collab-qrow-main">' +
+          '<span class="hub-collab-qrow-t">' + (p.doc ? '<i class="hub-collab-qspark" aria-hidden="true">✦</i>' + esc(p.doc.title) : '<em class="hub-collab-qchip is-fb">Dự phòng</em><span class="hub-collab-qempty">Chưa có đề — dùng đề dự phòng</span>') + '</span>' +
+          '<span class="hub-collab-qrow-who">' + (w ? avatarHtml(w, 'is-sm') + '<i>' + esc(w.name) + (mine ? ' (bạn)' : '') + '</i>' : '<i>—</i>') + (i === 0 ? '<em class="hub-collab-qchip is-next">Tiếp theo</em>' : '') + '</span></span>' +
         (canOpen ? '<button type="button" class="hub-collab-btn' + (mine && !p.doc ? ' is-primary' : '') + '" data-act="quest-open" data-date="' + esc(p.date) + '">' + label + '</button>' : '') + '</li>';
     }).join('');
     return '<section class="hub-collab-quest' + (done ? ' is-done' : '') + '" aria-labelledby="hc-q-title">' +
@@ -1039,8 +1042,10 @@ const collaborationModule = (function () {
           '<p class="hub-collab-muted">' + whoTxt + '</p></div>' +
         (done ? '<span class="hub-collab-status is-done">✓ Bạn đã chụp theo đề</span>' : '') + '</div>' +
       banner +
-      '<h4 class="hub-collab-h4">Lịch ra đề ' + QUEST_AHEAD + ' ngày tới</h4><ul class="hub-collab-qplan">' + rows + '</ul>' +
-      '<p class="hub-collab-muted">Ai tới lượt thì đăng đề trước ngày đó; không đăng thì phòng dùng đề dự phòng. Ảnh được đóng dấu đề, người duyệt có thể báo “Lạc đề”.</p></section>';
+      '<div class="hub-collab-qplanhead"><h4 class="hub-collab-h4">Lịch ra đề ' + QUEST_AHEAD + ' ngày tới</h4>' +
+        '<span class="hub-collab-qcount" title="Số ngày đã có người đăng đề"><b>' + setN + '</b>/' + plan.length + ' đã có đề<span class="hub-collab-qpips" aria-hidden="true">' + pips + '</span></span></div>' +
+      '<ul class="hub-collab-qplan">' + rows + '</ul>' +
+      '<p class="hub-collab-muted hub-collab-qnote">Ai tới lượt thì đăng đề trước ngày đó; không đăng thì phòng dùng đề dự phòng. Ảnh được đóng dấu đề, người duyệt có thể báo “Lạc đề”.</p></section>';
   }
   function questDlgHtml(room, c, me) {
     var f = S.qForm; if (!f) return '';
