@@ -1589,3 +1589,82 @@ body.theme-optimized .hub-collab-app .hub-collab-avopt-pic.is-letter { backgroun
   .hub-collab-rule-grid { grid-template-columns: 1fr; }
   .hub-collab-dtabs button { padding: 0 8px; font-size: 0.72rem; }
 }
+/* ==========================================================================
+   ĐỀ NGÀY (Daily Quest) — thiết kế 1 bộ cho theme nền; mọi màu / bo góc / font đều lấy từ token --cb-*,
+   nên các theme khác tự đổi màu theo token. Phần tinh chỉnh riêng từng theme (viền, bo góc, hiệu ứng) để làm sau.
+   ========================================================================== */
+.hub-collab-app { --cb-quest: var(--cb-warn); }
+
+/* thẻ đề hôm nay + lịch ra đề */
+.hub-collab-quest { position: relative; display: grid; gap: 12px; margin-bottom: 14px; padding: 16px 18px; border: 1px solid color-mix(in srgb, var(--cb-quest) 45%, var(--cb-line2)); border-left: 3px solid var(--cb-quest); border-radius: var(--cb-r); background: linear-gradient(120deg, color-mix(in srgb, var(--cb-quest) 9%, var(--cb-bg)), var(--cb-bg) 72%); }
+.hub-collab-quest.is-done { border-color: color-mix(in srgb, var(--cb-ok) 50%, var(--cb-line2)); border-left-color: var(--cb-ok); background: linear-gradient(120deg, color-mix(in srgb, var(--cb-ok) 7%, var(--cb-bg)), var(--cb-bg) 72%); }
+.hub-collab-quest-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.hub-collab-qtag { padding: 3px 9px; border: 1px solid color-mix(in srgb, var(--cb-quest) 55%, transparent); border-radius: var(--cb-pill); font: 700 0.6rem/1 var(--cb-font-n); letter-spacing: 0.08em; text-transform: uppercase; color: var(--cb-quest); }
+.hub-collab-quest-main { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; min-width: 0; }
+.hub-collab-quest-mark { flex: none; display: grid; place-items: center; width: 42px; height: 42px; border: 1px solid color-mix(in srgb, var(--cb-quest) 55%, transparent); border-radius: 50%; background: color-mix(in srgb, var(--cb-quest) 12%, transparent); font-size: 1.15rem; line-height: 1; color: var(--cb-quest); }
+.hub-collab-quest-body { flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.hub-collab-quest-title { margin: 0; font: 800 1.15rem/1.3 var(--cb-font-d); color: var(--cb-text); overflow-wrap: anywhere; }
+.hub-collab-quest-hint { margin: 0; font-size: 0.84rem; line-height: 1.45; color: var(--cb-text); overflow-wrap: anywhere; }
+.hub-collab-quest .hub-collab-h4 { margin: 4px 0 0; }
+.hub-collab-qturn { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; padding: 10px 12px; border: 1px dashed var(--cb-quest); border-radius: var(--cb-r-sm); background: color-mix(in srgb, var(--cb-quest) 9%, transparent); font-size: 0.84rem; color: var(--cb-text); }
+.hub-collab-qturn b { color: var(--cb-quest); }
+.hub-collab-qturn .hub-collab-btn { min-height: 32px; padding: 0 12px; font-size: 0.78rem; }
+
+.hub-collab-qplan { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; border: 1px solid var(--cb-line); border-radius: var(--cb-r-sm); overflow: hidden; background: var(--cb-line); }
+.hub-collab-qrow { display: grid; grid-template-columns: 76px minmax(0, 150px) minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 7px 12px; background: var(--cb-bg); font-size: 0.8rem; color: var(--cb-text2); }
+.hub-collab-qrow.is-mine { background: color-mix(in srgb, var(--cb-quest) 7%, var(--cb-bg)); }
+.hub-collab-qrow-d { font: 600 0.74rem/1.2 var(--cb-font-n); color: var(--cb-text2); white-space: nowrap; }
+.hub-collab-qrow-d b { margin-right: 4px; color: var(--cb-text); }
+.hub-collab-qrow-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.hub-collab-qrow-who i { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: normal; color: var(--cb-text); }
+.hub-collab-qrow .hub-collab-avatar { flex: none; width: 26px; height: 26px; font-size: 0.7rem; }
+.hub-collab-qrow-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cb-muted); }
+.hub-collab-qrow.is-set .hub-collab-qrow-t { color: var(--cb-quest); font-weight: 600; }
+.hub-collab-qrow .hub-collab-btn { min-height: 28px; padding: 0 10px; font-size: 0.72rem; }
+@media (max-width: 640px) {
+  .hub-collab-qrow { grid-template-columns: 62px minmax(0, 1fr) auto; }
+  .hub-collab-qrow-t { grid-column: 1 / -1; order: 5; white-space: normal; }
+}
+
+/* chip trên hồ sơ thành viên + dòng đề dưới check-in */
+.hub-collab-qstreak { padding: 2px 8px; border: 1px solid color-mix(in srgb, var(--cb-quest) 55%, transparent); border-radius: var(--cb-pill); font: 700 0.64rem/1.2 var(--cb-font-n); color: var(--cb-quest); }
+.hub-collab-qstreak b { font-weight: 800; }
+.hub-collab-qskip { font: 600 0.64rem/1.2 var(--cb-font-n); color: var(--cb-muted); }
+.hub-collab-qline { display: block; margin-top: 2px; font-size: 0.76rem; line-height: 1.4; color: var(--cb-quest); overflow-wrap: anywhere; }
+.hub-collab-feed li .hub-collab-qline { display: inline; margin: 0; }
+
+/* chip duyệt */
+.hub-collab-rv.is-quest { color: var(--cb-quest); }
+.hub-collab-rv.is-off { color: var(--cb-accent); background: color-mix(in srgb, var(--cb-accent) 9%, transparent); }
+.hub-collab-rv.is-offn { color: var(--cb-accent); border-style: dashed; }
+
+/* camera: thẻ đề + tem đề trên khung ngắm */
+.hub-collab-qcam { display: flex; flex-direction: column; gap: 3px; margin: 0 0 10px; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--cb-quest) 45%, var(--cb-line2)); border-left: 3px solid var(--cb-quest); border-radius: var(--cb-r-sm); background: color-mix(in srgb, var(--cb-quest) 8%, transparent); }
+.hub-collab-qcam-k { font: 700 0.62rem/1 var(--cb-font-n); letter-spacing: 0.12em; text-transform: uppercase; color: var(--cb-quest); }
+.hub-collab-qcam-t { font: 800 1rem/1.3 var(--cb-font-d); color: var(--cb-text); overflow-wrap: anywhere; }
+.hub-collab-camhud--q { left: auto; right: 10px; max-width: 58%; }
+.hub-collab-camhud--q b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* hộp xem ảnh: đối chiếu đề, bỏ phiếu Lạc đề */
+.hub-collab-qverify { display: flex; align-items: center; gap: 12px; margin: 10px 0 0; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--cb-quest) 40%, var(--cb-line2)); border-left: 3px solid var(--cb-quest); border-radius: var(--cb-r-sm); background: color-mix(in srgb, var(--cb-quest) 7%, var(--cb-deep)); }
+.hub-collab-qverify-mark { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid color-mix(in srgb, var(--cb-quest) 55%, transparent); border-radius: 50%; font-size: 1rem; line-height: 1; color: var(--cb-quest); }
+.hub-collab-qverify-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 0.78rem; line-height: 1.4; color: var(--cb-text2); }
+.hub-collab-qverify-txt b { font: 700 0.8rem/1.3 var(--cb-font-d); color: var(--cb-text); overflow-wrap: anywhere; }
+.hub-collab-qverify.is-off { border-color: color-mix(in srgb, var(--cb-accent) 40%, var(--cb-line2)); border-left-color: var(--cb-accent); background: color-mix(in srgb, var(--cb-accent) 7%, var(--cb-deep)); }
+.hub-collab-qverify.is-off .hub-collab-qverify-mark { border-color: color-mix(in srgb, var(--cb-accent) 55%, transparent); color: var(--cb-accent); }
+.hub-collab-tally li.is-off span { color: var(--cb-accent); }
+.hub-collab-verdict.is-off { color: var(--cb-accent); font-weight: 600; }
+.hub-collab-vote { flex-wrap: wrap; }
+.hub-collab-vote .hub-collab-btn { flex: 1 1 110px; }
+.hub-collab-vote .hub-collab-btn.is-off { color: var(--cb-accent); border-color: color-mix(in srgb, var(--cb-accent) 55%, var(--cb-line2)); }
+.hub-collab-vote .hub-collab-btn.is-off:hover:not(:disabled) { color: var(--cb-accent); border-color: var(--cb-accent); }
+
+/* kho nhật ký */
+.hub-collab-arow-q { margin: 2px 0 0; font-size: 0.78rem; line-height: 1.4; color: var(--cb-quest); overflow-wrap: anywhere; }
+.hub-collab-arc-q { margin: 0 0 12px; padding: 8px 12px; border: 1px dashed color-mix(in srgb, var(--cb-quest) 55%, var(--cb-line2)); border-radius: var(--cb-r-sm); font-size: 0.8rem; color: var(--cb-text2); }
+.hub-collab-arc-q b { color: var(--cb-text); }
+
+/* hộp soạn đề */
+.hub-collab-dialog--quest { width: min(520px, calc(100vw - 24px)); }
+.hub-collab-quest-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.hub-collab-quest-acts .hub-collab-btn { flex: 1 1 auto; }
