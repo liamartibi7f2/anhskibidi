@@ -394,7 +394,9 @@ const collaborationModule = (function () {
     });
     var setter = '';
     for (i = 0; i < cands.length; i++) if (!passed[cands[i]]) { setter = cands[i]; break; }
-    var o = { date: date, mode: mode, cands: cands, passed: passed, doc: best, pool: !best, open: date >= today };
+    // Đã có người check-in trong ngày này → đề của ngày đã được dùng (check-in giữ bản chụp tiêu đề): khoá, không đăng / sửa / xoá nữa.
+    var locked = Object.keys(room.checkins || {}).some(function (u) { return !!(room.checkins[u] && room.checkins[u][date]); });
+    var o = { date: date, mode: mode, cands: cands, passed: passed, doc: best, pool: !best, locked: locked, open: date >= today && !locked };
     if (best) { o.setter = best.by; o.qid = date + '_' + best.by; o.title = best.title; o.hint = best.hint || ''; }
     else {
       var pi = qseed((room.id || '') + '|' + date) % QUEST_POOL.length;
@@ -1012,7 +1014,7 @@ const collaborationModule = (function () {
     var whoTxt = q.doc
       ? 'Đề do <b>' + esc(who ? who.name : 'một thành viên') + (isMe ? ' (bạn)' : '') + '</b> ra'
       : (who ? '<b>' + esc(who.name) + (isMe ? ' (bạn)' : '') + '</b> chưa đăng đề nên hôm nay dùng <b>đề dự phòng</b>' : 'Hôm nay dùng <b>đề dự phòng</b>');
-    var turn = [qm.today].concat(qm.plan).filter(function (p) { return p && p.setter === me && !p.doc && p.cands.indexOf(me) > -1; })[0];
+    var turn = [qm.today].concat(qm.plan).filter(function (p) { return p && !p.locked && p.setter === me && !p.doc && p.cands.indexOf(me) > -1; })[0];
     var banner = turn
       ? '<div class="hub-collab-qturn" role="status"><span>Đến lượt bạn ra đề cho ngày <b>' + fmtDay(turn.date) + '</b> (' + dayName(turn.date) + ').</span>' +
         '<button type="button" class="hub-collab-btn is-primary" data-act="quest-open" data-date="' + esc(turn.date) + '">Ra đề ngay</button></div>'
@@ -1020,7 +1022,7 @@ const collaborationModule = (function () {
     var rows = qm.plan.map(function (p) {
       if (!p) return '';
       var w = memberByUid(p.setter), mine = p.setter === me, mineDoc = (room.quests || []).filter(function (x) { return x.date === p.date && x.by === me; })[0];
-      var canOpen = mine || !!mineDoc || (p.date === c.today && p.cands.indexOf(me) > -1);
+      var canOpen = !p.locked && (mine || !!mineDoc || (p.date === c.today && p.cands.indexOf(me) > -1));
       var label = mineDoc ? (mineDoc.pass ? 'Đã nhường' : 'Sửa') : 'Ra đề';
       return '<li class="hub-collab-qrow' + (mine ? ' is-mine' : '') + (p.doc ? ' is-set' : '') + '">' +
         '<span class="hub-collab-qrow-d"><b>' + DOW_SHORT[parseYmd(p.date).getDay()] + '</b> ' + fmtDay(p.date) + '</span>' +
@@ -1042,10 +1044,11 @@ const collaborationModule = (function () {
   }
   function questDlgHtml(room, c, me) {
     var f = S.qForm; if (!f) return '';
-    var d = f.date, mine = (room.quests || []).filter(function (x) { return x.date === d && x.by === me; })[0], isPass = !!(mine && mine.pass), hasDoc = !!(mine && !mine.pass), busy = S.qBusy ? ' disabled' : '';
+    var d = f.date, mine = (room.quests || []).filter(function (x) { return x.date === d && x.by === me; })[0], isPass = !!(mine && mine.pass), hasDoc = !!(mine && !mine.pass), lk = questFor(room, d, c.today), locked = !!(lk && lk.locked), busy = (S.qBusy || locked) ? ' disabled' : '';
     return '<div class="hub-collab-scrim" data-act="close"></div><div class="hub-collab-dialog hub-collab-dialog--quest" role="dialog" aria-modal="true" aria-labelledby="hc-dlg-title">' +
       '<div class="hub-collab-dialog-head"><h3 id="hc-dlg-title">Ra đề cho ' + dayName(d) + ', ' + fmtDay(d) + '</h3><button type="button" class="hub-collab-btn is-ghost" data-act="close" aria-label="Đóng">✕</button></div>' +
       '<div class="hub-collab-form">' +
+      (locked ? '<p class="hub-collab-warn">Ngày này đã có người check-in nên đề đã chốt, không đăng / sửa / xoá được nữa.</p>' : '') +
       (isPass ? '<p class="hub-collab-muted">Bạn đã nhường lượt ngày này. Đổi ý thì cứ đăng đề — miễn là ngày đó chưa qua.</p>' : '') +
       field('Đề chụp (tối đa ' + QUEST_TITLE_MAX + ' ký tự)', '<input class="hub-collab-input" data-q="title" maxlength="' + QUEST_TITLE_MAX + '" placeholder="VD: Thứ màu đỏ gần bạn nhất" value="' + esc(f.title) + '">') +
       field('Gợi ý thêm (tuỳ chọn, tối đa ' + QUEST_HINT_MAX + ' ký tự)', '<input class="hub-collab-input" data-q="hint" maxlength="' + QUEST_HINT_MAX + '" value="' + esc(f.hint) + '">') +
@@ -1972,6 +1975,13 @@ const collaborationModule = (function () {
       var b = S.root && S.root.querySelector('[data-act="confirm-ok"]'); if (b) b.textContent = 'Đang xoá… ' + S.confirm.progress;
     }).then(function () { return { msg: 'Đã xoá phòng.', leave: true }; });
   }
+  /** Chặn ra / sửa / xoá đề của ngày đã có check-in (kể cả khi hộp soạn đã mở từ trước khi có người check-in). */
+  function questLockedNow(date) {
+    var q = S.room && S.calc && questFor(S.room, date, S.calc.today);
+    if (!q || !q.locked) return false;
+    S.qForm = null; S.qBusy = false; S.dlg = ''; paint(); toast('Ngày ' + fmtDay(date) + ' đã có người check-in nên không đổi đề nữa.');
+    return true;
+  }
   function questNow() { var q = S.room && S.calc && questFor(S.room, S.calc.today, S.calc.today); return q ? { id: q.qid, title: q.title, hint: q.hint, by: q.setter } : null; }
   function mineNow() { return S.room && S.room.members.filter(function (m) { return m.uid === S.store.uid; })[0]; }
 
@@ -2351,6 +2361,7 @@ const collaborationModule = (function () {
     'quest-open': function (el) {
       var date = el.getAttribute('data-date'), me = S.store.uid, q = S.calc && questFor(S.room, date, S.calc.today);
       if (!q || date < S.calc.today || q.cands.indexOf(me) < 0) { toast('Chưa tới lượt bạn ra đề cho ngày này.'); return; }
+      if (q.locked) { toast('Ngày ' + fmtDay(date) + ' đã có người check-in nên không đổi đề nữa.'); return; }
       var mine = (S.room.quests || []).filter(function (x) { return x.date === date && x.by === me; })[0];
       S.qForm = { date: date, title: mine && !mine.pass ? mine.title : '', hint: mine && !mine.pass ? mine.hint : '' };
       S.qBusy = false; S.dlg = 'quest'; S._dlgFocused = false; paint();
@@ -2364,6 +2375,7 @@ const collaborationModule = (function () {
     'quest-save': function () {
       var f = S.qForm, me = S.store.uid; if (!f || S.qBusy) return;
       var title = String(f.title || '').trim().slice(0, QUEST_TITLE_MAX), hint = String(f.hint || '').trim().slice(0, QUEST_HINT_MAX), date = f.date;
+      if (questLockedNow(date)) return;
       if (!title) { toast('Hãy nhập đề chụp (tối đa ' + QUEST_TITLE_MAX + ' ký tự).'); return; }
       var mine = (S.room.quests || []).filter(function (x) { return x.date === date && x.by === me; })[0];
       S.qBusy = true; paint();
@@ -2374,6 +2386,7 @@ const collaborationModule = (function () {
     'quest-pass': function () {
       var f = S.qForm, me = S.store.uid; if (!f || S.qBusy) return;
       var date = f.date, mine = (S.room.quests || []).filter(function (x) { return x.date === date && x.by === me; })[0];
+      if (questLockedNow(date)) return;
       S.qBusy = true; paint();
       S.store.saveQuest(S.roomId, date, { pass: true, exists: !!mine }).then(function () {
         if (!S) return; S.qBusy = false; S.qForm = null; S.dlg = ''; paint(); toast('Đã nhường lượt ra đề ngày ' + fmtDay(date) + ' cho người kế tiếp.');
@@ -2382,7 +2395,8 @@ const collaborationModule = (function () {
     'quest-del': function () {
       var f = S.qForm; if (!f || S.qBusy) return;
       if (!window.confirm('Xoá đề ngày ' + fmtDay(f.date) + '? Nếu không đăng lại, phòng sẽ dùng đề dự phòng.')) return;
-      var date = f.date; S.qBusy = true; paint();
+      var date = f.date; if (questLockedNow(date)) return;
+      S.qBusy = true; paint();
       S.store.delQuest(S.roomId, date).then(function () {
         if (!S) return; S.qBusy = false; S.qForm = null; S.dlg = ''; paint(); toast('Đã xoá đề ngày ' + fmtDay(date) + '.');
       }, function (e) { if (!S) return; S.qBusy = false; paint(); toast(errMsg(e)); });
