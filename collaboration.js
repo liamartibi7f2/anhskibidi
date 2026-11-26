@@ -1288,15 +1288,22 @@ const collaborationModule = (function () {
   function arcCalendarHtml(room, c, arc) {
     var days = daysInMonth(arc.month), firstW = parseYmd(days[0]).getDay(), lead = (firstW + 6) % 7;
     var dows = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'].map(function (w) { return '<span>' + w + '</span>'; }).join('');
-    var cells = '';
+    var cells = '', mDue = 0, mChecked = 0, mSync = 0, mSched = 0, cPerfect = 0, cWarn = 0, cBad = 0, cPart = 0;
     for (var b = 0; b < lead; b++) cells += '<span class="hub-collab-cal-pad" aria-hidden="true"></span>';
     days.forEach(function (d) {
       var num = +d.slice(8), future = d > c.today;
       if (future) {
-        cells += '<button type="button" class="hub-collab-cal-day is-future" disabled><b>' + num + '</b></button>';
+        cells += '<button type="button" class="hub-collab-cal-day is-future" disabled><span class="hub-collab-cal-num"><b>' + num + '</b></span></button>';
         return;
       }
       var due = 0, checked = 0, lateN = 0, vlateN = 0, voidN = 0;
+      var hasQuest = !!(d === c.today && c.quest && c.quest.today);
+      if (!hasQuest) {
+        Object.keys(room.checkins).forEach(function (u) {
+          var ciq = room.checkins[u] && room.checkins[u][d];
+          if (ciq && ciq.qt) hasQuest = true;
+        });
+      }
       room.members.forEach(function (m) {
         if (arc.member !== 'all' && m.uid !== arc.member) return;
         if (!scheduled(m, d)) return;
@@ -1311,22 +1318,47 @@ const collaborationModule = (function () {
           voidN++;
         }
       });
+      if (due > 0) {
+        mSched++;
+        mDue += due;
+        mChecked += checked;
+        if (checked === due) mSync++;
+      }
       var miss = due - checked;
-      var cls = !due ? 'is-rest' : (d === c.today && miss > 0 && !voidN) ? 'is-part' : (miss > 0 || vlateN > 0) ? 'is-bad' : lateN > 0 ? 'is-warn' : 'is-perfect';
+      var stKind = !due ? 'rest' : (d === c.today && miss > 0 && !voidN) ? 'part' : (miss > 0 || vlateN > 0) ? 'bad' : lateN > 0 ? 'warn' : 'perfect';
+      if (stKind === 'perfect') cPerfect++;
+      else if (stKind === 'warn') cWarn++;
+      else if (stKind === 'bad') cBad++;
+      else if (stKind === 'part') cPart++;
+      var cls = 'is-' + stKind;
+      if (hasQuest) cls += ' has-quest';
       if (d === c.today) cls += ' is-today';
       if (d === arc.day && arc.mode === 'day') cls += ' is-sel';
       var tip = fmtDay(d) + (due ? ': ' + checked + '/' + due + ' đã check-in' + (lateN ? ', ' + lateN + ' muộn' : '') + (vlateN ? ', ' + vlateN + ' muộn >1H' : '') + (voidN ? ', ' + voidN + ' bị hủy' : '') : ': ngày nghỉ');
-      cells += '<button type="button" class="hub-collab-cal-day ' + cls + '" data-act="arc-day" data-day="' + d + '" title="' + esc(tip) + '">' +
-        '<b>' + num + '</b>' +
-        (due ? '<small class="hub-collab-cal-ratio">' + checked + '/' + due + '</small><i class="hub-collab-cal-dot" aria-hidden="true"></i>' : '<small class="hub-collab-cal-ratio">—</small>') +
+      var fillPct = due ? Math.round(checked / due * 100) : 0;
+      cells += '<button type="button" class="hub-collab-cal-day ' + cls + '" data-st="' + stKind + '" data-act="arc-day" data-day="' + d + '" title="' + esc(tip) + '">' +
+        '<span class="hub-collab-cal-num"><b>' + num + '</b>' + (hasQuest ? '<i class="hub-collab-cal-q" aria-hidden="true">✦</i>' : '') + '</span>' +
+        (due
+          ? '<small class="hub-collab-cal-ratio">' + checked + '/' + due + '</small><span class="hub-collab-cal-bar" aria-hidden="true"><i style="width:' + fillPct + '%"></i></span>'
+          : '<small class="hub-collab-cal-ratio">—</small>') +
       '</button>';
     });
-    return '<div class="hub-collab-cal"><div class="hub-collab-cal-dow">' + dows + '</div><div class="hub-collab-cal-grid">' + cells + '</div>' +
+    var mRate = mDue ? Math.round(mChecked / mDue * 100) : 0;
+    return '<div class="hub-collab-cal">' +
+      '<div class="hub-collab-cal-head">' +
+        '<div class="hub-collab-cal-title"><span class="hub-collab-cal-k">Lịch hoạt động</span><b>' + esc(fmtMonthLabel(arc.month)) + '</b></div>' +
+        '<div class="hub-collab-cal-stats">' +
+          '<span><b>' + mRate + '%</b> hoàn thành</span>' +
+          '<span><b>' + mSync + '/' + mSched + '</b> đồng bộ</span>' +
+          '<span><b>' + mChecked + '</b> lượt</span>' +
+        '</div>' +
+      '</div>' +
+      '<div class="hub-collab-cal-dow">' + dows + '</div><div class="hub-collab-cal-grid">' + cells + '</div>' +
       '<div class="hub-collab-cal-leg">' +
-        '<span><i class="is-perfect"></i>Đủ &amp; đúng giờ</span>' +
-        '<span><i class="is-warn"></i>Có check-in muộn</span>' +
-        '<span><i class="is-bad"></i>Có bỏ lỡ / muộn &gt;1H</span>' +
-        '<span><i class="is-part"></i>Hôm nay đang chờ</span>' +
+        '<span><i class="is-perfect"></i>Đủ &amp; đúng giờ' + (cPerfect ? ' <em>· ' + cPerfect + '</em>' : '') + '</span>' +
+        '<span><i class="is-warn"></i>Có check-in muộn' + (cWarn ? ' <em>· ' + cWarn + '</em>' : '') + '</span>' +
+        '<span><i class="is-bad"></i>Có bỏ lỡ / muộn &gt;1H' + (cBad ? ' <em>· ' + cBad + '</em>' : '') + '</span>' +
+        '<span><i class="is-part"></i>Hôm nay đang chờ' + (cPart ? ' <em>· ' + cPart + '</em>' : '') + '</span>' +
       '</div></div>';
   }
   function arcDayHtml(room, c, members, arc, me, nudgedBy) {
@@ -1445,12 +1477,15 @@ const collaborationModule = (function () {
     return '<div class="hub-collab-gallery">' + items.map(function (it) {
       var voided = !!(it.entry && it.entry.j.voided);
       return '<article class="hub-collab-gcard ' + (voided ? 'is-void' : lateCls(it.li)) + '">' +
-        thumbHtml(it.uid, it.date, it.name, 'hub-collab-gcard-img', 'gallery', it.entry) +
+        '<div class="hub-collab-gcard-frame">' +
+          thumbHtml(it.uid, it.date, it.name, 'hub-collab-gcard-img', 'gallery', it.entry) +
+          '<span class="hub-collab-gcard-stamp" aria-hidden="true">' + fmtDay(it.date) + ' · ' + fmtTime(it.at) + '</span>' +
+        '</div>' +
         '<div class="hub-collab-gcard-meta">' +
           '<div class="hub-collab-gcard-top"><b>' + esc(it.name) + '</b>' +
             (voided ? '<span class="hub-collab-status hub-collab-status--xs is-void">Bị hủy</span>'
               : '<span class="hub-collab-status hub-collab-status--xs ' + lateCls(it.li) + '">' + lateIcon(it.li) + (it.li && it.li.label ? ' ' + esc(it.li.label) : ' Đúng giờ') + '</span>') + '</div>' +
-          '<span class="hub-collab-muted">' + fmtTime(it.at) + ' · ' + fmtDay(it.date) + '</span>' +
+          '<span class="hub-collab-muted hub-collab-gcard-sub">' + esc(it.cm && it.cm.title ? it.cm.title : fmtTime(it.at) + ' · ' + fmtDay(it.date)) + '</span>' +
           reviewChips(it.entry) +
           (it.note ? '<p class="hub-collab-gcard-note">“' + esc(it.note) + '”</p>' : '') +
         '</div></article>';
@@ -1508,11 +1543,14 @@ const collaborationModule = (function () {
         '<div class="hub-collab-mkpi is-ok"><span class="hub-collab-kicker">Đúng giờ</span><b>' + onTimeRate + '%</b><small>' + ms.okN + ' lượt</small></div>' +
         '<div class="hub-collab-mkpi is-warn"><span class="hub-collab-kicker">Muộn / Lỡ</span><b>' + (ms.lateN + ms.vlateN) + ' / ' + ms.missN + '</b><small>' + ms.lateN + ' ≤1H · ' + ms.vlateN + ' &gt;1H</small></div>' +
       '</div>' +
-      (sumAll ? '<div class="hub-collab-mbar" aria-label="Tỉ lệ trạng thái trong tháng">' +
-        '<i class="is-ok" style="width:' + pct(ms.okN) + '%" title="Đúng giờ: ' + ms.okN + '"></i>' +
-        '<i class="is-late" style="width:' + pct(ms.lateN) + '%" title="Muộn ≤1H: ' + ms.lateN + '"></i>' +
-        '<i class="is-vlate" style="width:' + pct(ms.vlateN) + '%" title="Muộn >1H: ' + ms.vlateN + '"></i>' +
-        '<i class="is-miss" style="width:' + pct(ms.missN) + '%" title="Bỏ lỡ: ' + ms.missN + '"></i></div>' : '') +
+      (sumAll ? '<div class="hub-collab-mbar-wrap">' +
+        '<div class="hub-collab-mbar-head"><span>Phân bổ trạng thái tháng</span><span>Đúng giờ ' + ms.okN + ' · Muộn ' + (ms.lateN + ms.vlateN) + ' · Lỡ ' + ms.missN + '</span></div>' +
+        '<div class="hub-collab-mbar" aria-label="Tỉ lệ trạng thái trong tháng">' +
+          '<i class="is-ok" style="width:' + pct(ms.okN) + '%" title="Đúng giờ: ' + ms.okN + '"></i>' +
+          '<i class="is-late" style="width:' + pct(ms.lateN) + '%" title="Muộn ≤1H: ' + ms.lateN + '"></i>' +
+          '<i class="is-vlate" style="width:' + pct(ms.vlateN) + '%" title="Muộn >1H: ' + ms.vlateN + '"></i>' +
+          '<i class="is-miss" style="width:' + pct(ms.missN) + '%" title="Bỏ lỡ: ' + ms.missN + '"></i>' +
+        '</div></div>' : '') +
       '<div class="hub-collab-maudit">' + ms.rows.map(function (pm) {
         var r = pm.due ? Math.round(pm.done / pm.due * 100) : 0;
         return '<div class="hub-collab-maudit-row">' +
@@ -1556,32 +1594,42 @@ const collaborationModule = (function () {
     if (w && arc.week !== w.weekStart) arc.week = w.weekStart;
     var rightNav = wMode
       ? '<div class="hub-collab-arc-mnav">' +
-          '<button type="button" class="hub-collab-btn" data-act="arc-week" data-dir="-1" aria-label="Tuần trước"' + (!w.canPrev ? ' disabled' : '') + '>◀</button>' +
-          '<b>Tuần ' + fmtDay(w.weekStart) + ' – ' + fmtDay(w.weekEnd) + '</b>' +
-          '<button type="button" class="hub-collab-btn" data-act="arc-week" data-dir="1" aria-label="Tuần sau"' + (!w.canNext ? ' disabled' : '') + '>▶</button>' +
-          '<button type="button" class="hub-collab-btn" data-act="arc-week-latest">Tuần vừa qua</button>' +
-          '<button type="button" class="hub-collab-btn" data-act="weekly-copy" data-wstart="' + esc(w.weekStart) + '" title="Chép tổng kết tuần">Copy tổng kết</button>' +
+          '<div class="hub-collab-arc-step">' +
+            '<button type="button" class="hub-collab-btn" data-act="arc-week" data-dir="-1" aria-label="Tuần trước"' + (!w.canPrev ? ' disabled' : '') + '>◀</button>' +
+            '<b>Tuần ' + fmtDay(w.weekStart) + ' – ' + fmtDay(w.weekEnd) + '</b>' +
+            '<button type="button" class="hub-collab-btn" data-act="arc-week" data-dir="1" aria-label="Tuần sau"' + (!w.canNext ? ' disabled' : '') + '>▶</button>' +
+          '</div>' +
+          '<div class="hub-collab-arc-acts">' +
+            '<button type="button" class="hub-collab-btn" data-act="arc-week-latest">Tuần vừa qua</button>' +
+            '<button type="button" class="hub-collab-btn" data-act="weekly-copy" data-wstart="' + esc(w.weekStart) + '" title="Chép tổng kết tuần">Copy tổng kết</button>' +
+          '</div>' +
         '</div>'
       : '<div class="hub-collab-arc-mnav">' +
-          '<button type="button" class="hub-collab-btn" data-act="arc-month" data-dir="-1" aria-label="Tháng trước">◀</button>' +
-          '<b>' + esc(fmtMonthLabel(arc.month)) + '</b>' +
-          '<button type="button" class="hub-collab-btn" data-act="arc-month" data-dir="1" aria-label="Tháng sau"' + (nextDis ? ' disabled' : '') + '>▶</button>' +
-          '<button type="button" class="hub-collab-btn" data-act="arc-today">Hôm nay</button>' +
-          '<button type="button" class="hub-collab-btn" data-act="arc-copy" title="Chép báo cáo điểm danh">Copy báo cáo</button>' +
+          '<div class="hub-collab-arc-step">' +
+            '<button type="button" class="hub-collab-btn" data-act="arc-month" data-dir="-1" aria-label="Tháng trước">◀</button>' +
+            '<b>' + esc(fmtMonthLabel(arc.month)) + '</b>' +
+            '<button type="button" class="hub-collab-btn" data-act="arc-month" data-dir="1" aria-label="Tháng sau"' + (nextDis ? ' disabled' : '') + '>▶</button>' +
+          '</div>' +
+          '<div class="hub-collab-arc-acts">' +
+            '<button type="button" class="hub-collab-btn" data-act="arc-today">Hôm nay</button>' +
+            '<button type="button" class="hub-collab-btn" data-act="arc-copy" title="Chép báo cáo điểm danh">Copy báo cáo</button>' +
+          '</div>' +
         '</div>';
     var bar = '<div class="hub-collab-arc-bar">' +
         '<div class="hub-collab-arc-modes" role="group" aria-label="Chế độ xem kho nhật ký">' +
-          '<button type="button" class="hub-collab-btn" data-act="arc-mode" data-amode="day" aria-pressed="' + (arc.mode === 'day') + '">Theo ngày</button>' +
-          '<button type="button" class="hub-collab-btn" data-act="arc-mode" data-amode="gallery" aria-pressed="' + (arc.mode === 'gallery') + '">Thư viện ảnh</button>' +
-          '<button type="button" class="hub-collab-btn" data-act="arc-mode" data-amode="month" aria-pressed="' + (arc.mode === 'month') + '">Tổng quan tháng</button>' +
-          '<button type="button" class="hub-collab-btn" data-act="arc-mode" data-amode="weekly" aria-pressed="' + wMode + '">Tổng kết tuần</button>' +
+          '<button type="button" class="hub-collab-btn" data-act="arc-mode" data-amode="day" aria-pressed="' + (arc.mode === 'day') + '"><i aria-hidden="true">◫</i><span>Theo ngày</span></button>' +
+          '<button type="button" class="hub-collab-btn" data-act="arc-mode" data-amode="gallery" aria-pressed="' + (arc.mode === 'gallery') + '"><i aria-hidden="true">▦</i><span>Thư viện ảnh</span></button>' +
+          '<button type="button" class="hub-collab-btn" data-act="arc-mode" data-amode="month" aria-pressed="' + (arc.mode === 'month') + '"><i aria-hidden="true">◔</i><span>Tổng quan tháng</span></button>' +
+          '<button type="button" class="hub-collab-btn" data-act="arc-mode" data-amode="weekly" aria-pressed="' + wMode + '"><i aria-hidden="true">✦</i><span>Tổng kết tuần</span></button>' +
         '</div>' + rightNav + '</div>';
 
     var filters = wMode ? '' : arc.mode === 'month' ? '<div class="hub-collab-arc-filters">' +
+        '<span class="hub-collab-arc-flbl">Bộ lọc</span>' +
         '<select class="hub-collab-input" data-arc="member" aria-label="Lọc theo thành viên"><option value="all">Tất cả thành viên</option>' +
           members.map(function (m) { return '<option value="' + esc(m.uid) + '"' + (arc.member === m.uid ? ' selected' : '') + '>' + esc(m.name) + '</option>'; }).join('') +
         '</select></div>'
       : '<div class="hub-collab-arc-filters">' +
+        '<span class="hub-collab-arc-flbl">Bộ lọc</span>' +
         '<select class="hub-collab-input" data-arc="member" aria-label="Lọc theo thành viên"><option value="all">Tất cả thành viên</option>' +
           members.map(function (m) { return '<option value="' + esc(m.uid) + '"' + (arc.member === m.uid ? ' selected' : '') + '>' + esc(m.name) + '</option>'; }).join('') +
         '</select>' +
