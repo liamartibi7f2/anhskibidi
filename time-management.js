@@ -117,9 +117,12 @@ const timeManagementModule = (function () {
   Object.assign(TL_ICON, {
     sel:  TL_SVG('<path d="m9 11 3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h9"/>'),
     dl:   TL_SVG('<path d="M12 4v11M7 11l5 5 5-5M5 20h14"/>'),
-    dens: TL_SVG('<path d="M4 6h16M4 12h16M4 18h16"/>')
+    dens: TL_SVG('<path d="M4 6h16M4 12h16M4 18h16"/>'),
+    plus: TL_SVG('<path d="M12 5v14M5 12h14"/>'),
+    grip: TL_SVG('<circle cx="9" cy="6" r="1.2"/><circle cx="15" cy="6" r="1.2"/><circle cx="9" cy="12" r="1.2"/><circle cx="15" cy="12" r="1.2"/><circle cx="9" cy="18" r="1.2"/><circle cx="15" cy="18" r="1.2"/>')
   });
-  let _tl = { q: '', tag: 'all', range: 'all', status: 'all', pastOpen: false, open: {}, day: '', wk: 0, cap: 8, dens: 'cozy', sel: false, picked: {}, fold: {}, vis: [] };
+  let _tl = { q: '', tag: 'all', range: 'all', status: 'all', pastOpen: false, open: {}, day: '', wk: 0, cap: 8, dens: 'cozy', sel: false, picked: {}, fold: {}, vis: [], inbox: false, pane: 'timeline', ibxPri: 'all', ibxTag: 'all', editId: '', qe: null, slotPick: null };
+  let _tlDrag = null, _tlDragSuppress = 0;
   /* Set Time v2 — constants & state */
   const SB_DURS = [15, 30, 45, 60, 90, 120, 180];
   const SB_WEEKS = [1, 2, 4, 8, 12];
@@ -1232,38 +1235,72 @@ const timeManagementModule = (function () {
         '</div>' +
       '</div>' +
 
-      /* ── Timeline drawer ── */
+      /* ── Timeline drawer (Planning Studio: Split Inbox ⇄ Timeline) ── */
       '<div class="hub-tm-drawer-scrim" id="hub-tm-timeline-scrim"></div>' +
-      '<aside class="hub-tm-drawer" id="hub-tm-timeline-drawer" data-density="cozy" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="hub-tm-drawer-heading">' +
-        '<div class="hub-tm-drawer-head"><h3 class="hub-tm-drawer-title" id="hub-tm-drawer-heading">' + ICON.timeline + 'Timeline</h3><button type="button" class="hub-tm-dialog-close" id="tm-btn-timeline-close" aria-label="Close timeline">&times;</button></div>' +
-        '<div class="hub-tm-drawer-body hub-tm-drawer-body--tl">' +
-          '<div class="hub-tm-tl-controls">' +
-            '<div class="hub-tm-tl-tools">' +
-              '<div class="hub-tm-tl-search">' + TL_ICON.search + '<input type="search" class="hub-tm-input" id="tm-timeline-search" placeholder="Search blocks, tags, tasks…" aria-label="Search timeline" autocomplete="off"></div>' +
-              '<button type="button" class="hub-tm-tl-iconbtn" id="tm-timeline-today" title="Jump to today" aria-label="Jump to today">' + TL_ICON.target + '</button>' +
-              '<button type="button" class="hub-tm-tl-iconbtn" id="tm-timeline-select" data-tl-sel title="Select blocks (X)" aria-label="Select blocks" aria-pressed="false">' + TL_ICON.sel + '</button>' +
-              '<button type="button" class="hub-tm-tl-iconbtn" id="tm-timeline-dens" data-tl-dens title="Compact rows" aria-label="Toggle compact rows" aria-pressed="false">' + TL_ICON.dens + '</button>' +
-              '<button type="button" class="hub-tm-tl-iconbtn" id="tm-timeline-copy" title="Copy agenda as text" aria-label="Copy agenda as text">' + TL_ICON.copy + '</button>' +
-              '<button type="button" class="hub-tm-tl-iconbtn" id="tm-timeline-ics" title="Export as calendar file (.ics)" aria-label="Export as calendar file">' + TL_ICON.dl + '</button>' +
+      '<aside class="hub-tm-drawer" id="hub-tm-timeline-drawer" data-density="cozy" data-pane="timeline" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="hub-tm-drawer-heading">' +
+        '<div class="hub-tm-drawer-head">' +
+          '<h3 class="hub-tm-drawer-title" id="hub-tm-drawer-heading">' + ICON.timeline + 'Timeline</h3>' +
+          '<div class="hub-tm-drawer-head-acts">' +
+            '<button type="button" class="hub-tm-tl-ibxbtn" id="tm-tl-inbox-toggle" data-tl-ibx-toggle aria-pressed="false" aria-keyshortcuts="I" title="Toggle Inbox side panel (I)">' + ICON.inbox + '<span>Inbox</span><b class="hub-tm-tl-ibxbtn-n" id="tm-tl-ibx-badge" hidden></b></button>' +
+            '<button type="button" class="hub-tm-dialog-close" id="tm-btn-timeline-close" aria-label="Close timeline">&times;</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="hub-tm-tl-mtabs" id="hub-tm-tl-mtabs" role="tablist" aria-label="Timeline workspace">' +
+          '<button type="button" role="tab" data-tl-pane="timeline" aria-selected="true">Timeline</button>' +
+          '<button type="button" role="tab" data-tl-pane="inbox" aria-selected="false">Inbox <b id="tm-tl-mtab-n" hidden></b></button>' +
+        '</div>' +
+        '<div class="hub-tm-tl-studio">' +
+          '<section class="hub-tm-tl-inbox" id="hub-tm-tl-inbox" aria-label="Timeline Inbox">' +
+            '<div class="hub-tm-tl-ibx-head">' +
+              '<span class="hub-tm-tl-ibx-h">' + ICON.inbox + '<span>Inbox</span><b class="hub-tm-ibx-count" id="tm-tl-ibx-count"></b></span>' +
+              '<span class="hub-tm-tl-ibx-sum" id="tm-tl-ibx-sum" aria-live="polite"></span>' +
             '</div>' +
-            '<div class="hub-tm-tl-seg" id="hub-tm-tl-range" role="group" aria-label="Date range">' +
-              TL_RANGES.map(function (r) { return '<button type="button" data-tl-range="' + r[0] + '" aria-pressed="false">' + r[1] + '</button>'; }).join('') +
+            '<div class="hub-tm-ibx-add hub-tm-tl-ibx-add">' +
+              '<input type="text" class="hub-tm-input" id="tm-tl-ibx-input" maxlength="200" autocomplete="off" spellcheck="false" aria-label="Add to Inbox" placeholder="Add to Inbox… 30m · #tag · !high">' +
+              '<button type="button" class="hub-tm-btn hub-tm-btn--primary" id="tm-tl-ibx-add" aria-label="Add to Inbox" title="Add (Enter)">+</button>' +
             '</div>' +
-            '<div class="hub-tm-tl-chips" id="hub-tm-tl-tags" role="group" aria-label="Filter by tag"></div>' +
-            '<div class="hub-tm-tl-filters">' +
-              '<div class="hub-tm-tl-seg" id="hub-tm-tl-status" role="group" aria-label="Status">' +
-                TL_STATUS.map(function (r) { return '<button type="button" data-tl-status="' + r[0] + '" aria-pressed="false">' + r[1] + '</button>'; }).join('') +
+            '<div class="hub-tm-tl-ibx-filters">' +
+              '<div class="hub-tm-tl-seg hub-tm-tl-ibx-pris" id="tm-tl-ibx-pris" role="group" aria-label="Priority filter">' +
+                '<button type="button" data-tl-ibx-pri="all" aria-pressed="true">All</button>' +
+                '<button type="button" data-tl-ibx-pri="high" aria-pressed="false">High</button>' +
+                '<button type="button" data-tl-ibx-pri="normal" aria-pressed="false">Normal</button>' +
+                '<button type="button" data-tl-ibx-pri="low" aria-pressed="false">Low</button>' +
               '</div>' +
-              '<div class="hub-tm-sort-wrap"><label class="hub-tm-sr-only" for="tm-timeline-sort">Sort by</label><select class="hub-tm-input" id="tm-timeline-sort"><option value="nearest">Nearest first</option><option value="newest">Newly added</option><option value="duration">Longest first</option><option value="tag">By tag</option></select></div>' +
+              '<select class="hub-tm-input hub-tm-tl-ibx-tag" id="tm-tl-ibx-tag" aria-label="Filter Inbox by tag"></select>' +
             '</div>' +
+            '<p class="hub-tm-tl-ibx-hint">Drag onto any Free slot or day · drag blocks here to unschedule.</p>' +
+            '<ul class="hub-tm-ibx-list hub-tm-tl-ibx-list" id="tm-tl-ibx-list" aria-label="Unscheduled tasks"></ul>' +
+            '<div class="hub-tm-tl-ibx-drop" aria-hidden="true">' + ICON.inbox + '<span>Drop to move back to Inbox</span></div>' +
+          '</section>' +
+          '<div class="hub-tm-drawer-body hub-tm-drawer-body--tl hub-tm-tl-mainpane">' +
+            '<div class="hub-tm-tl-controls">' +
+              '<div class="hub-tm-tl-tools">' +
+                '<div class="hub-tm-tl-search">' + TL_ICON.search + '<input type="search" class="hub-tm-input" id="tm-timeline-search" placeholder="Search blocks, tags, tasks…" aria-label="Search timeline" autocomplete="off"></div>' +
+                '<button type="button" class="hub-tm-tl-iconbtn" id="tm-timeline-today" title="Jump to today" aria-label="Jump to today">' + TL_ICON.target + '</button>' +
+                '<button type="button" class="hub-tm-tl-iconbtn" id="tm-timeline-select" data-tl-sel title="Select blocks (X)" aria-label="Select blocks" aria-pressed="false">' + TL_ICON.sel + '</button>' +
+                '<button type="button" class="hub-tm-tl-iconbtn" id="tm-timeline-dens" data-tl-dens title="Compact rows" aria-label="Toggle compact rows" aria-pressed="false">' + TL_ICON.dens + '</button>' +
+                '<button type="button" class="hub-tm-tl-iconbtn" id="tm-timeline-copy" title="Copy agenda as text" aria-label="Copy agenda as text">' + TL_ICON.copy + '</button>' +
+                '<button type="button" class="hub-tm-tl-iconbtn" id="tm-timeline-ics" title="Export as calendar file (.ics)" aria-label="Export as calendar file">' + TL_ICON.dl + '</button>' +
+              '</div>' +
+              '<div class="hub-tm-tl-seg" id="hub-tm-tl-range" role="group" aria-label="Date range">' +
+                TL_RANGES.map(function (r) { return '<button type="button" data-tl-range="' + r[0] + '" aria-pressed="false">' + r[1] + '</button>'; }).join('') +
+              '</div>' +
+              '<div class="hub-tm-tl-chips" id="hub-tm-tl-tags" role="group" aria-label="Filter by tag"></div>' +
+              '<div class="hub-tm-tl-filters">' +
+                '<div class="hub-tm-tl-seg" id="hub-tm-tl-status" role="group" aria-label="Status">' +
+                  TL_STATUS.map(function (r) { return '<button type="button" data-tl-status="' + r[0] + '" aria-pressed="false">' + r[1] + '</button>'; }).join('') +
+                '</div>' +
+                '<div class="hub-tm-sort-wrap"><label class="hub-tm-sr-only" for="tm-timeline-sort">Sort by</label><select class="hub-tm-input" id="tm-timeline-sort"><option value="nearest">Nearest first</option><option value="newest">Newly added</option><option value="duration">Longest first</option><option value="tag">By tag</option></select></div>' +
+              '</div>' +
+            '</div>' +
+            '<div class="hub-tm-tl-scroll" id="hub-tm-tl-scroll">' +
+              '<div class="hub-tm-tl-week" id="hub-tm-tl-week"></div>' +
+              '<div id="hub-tm-tl-spot"></div>' +
+              '<div class="hub-tm-tl-stats" id="hub-tm-tl-stats"></div>' +
+              '<div id="hub-tm-timeline-list"></div>' +
+            '</div>' +
+            '<div class="hub-tm-tl-bulk" id="hub-tm-tl-bulk" role="toolbar" aria-label="Bulk actions" hidden></div>' +
           '</div>' +
-          '<div class="hub-tm-tl-scroll" id="hub-tm-tl-scroll">' +
-            '<div class="hub-tm-tl-week" id="hub-tm-tl-week"></div>' +
-            '<div id="hub-tm-tl-spot"></div>' +
-            '<div class="hub-tm-tl-stats" id="hub-tm-tl-stats"></div>' +
-            '<div id="hub-tm-timeline-list"></div>' +
-          '</div>' +
-          '<div class="hub-tm-tl-bulk" id="hub-tm-tl-bulk" role="toolbar" aria-label="Bulk actions" hidden></div>' +
         '</div>' +
       '</aside>' +
 
@@ -1348,16 +1385,18 @@ const timeManagementModule = (function () {
       const dlg = _modalStack[_modalStack.length - 1];
       if (dlg && dlg.id === 'hub-tm-details-modal') { e.preventDefault(); _saveDetails(); return; }
     }
+    const topMod = _modalStack[_modalStack.length - 1];
+    const inTlStudio = !!(topMod && topMod.id === 'hub-tm-timeline-drawer');
     if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && !e.isComposing && e.key && (e.key.toLowerCase() === 'c' || e.key.toLowerCase() === 'v') &&
-        !_modalStack.length && !_isTyping(e.target) && _sectionEl && _sectionEl.isConnected && !_sectionEl.classList.contains('hub-tm-hidden')) {
+        (!_modalStack.length || inTlStudio) && !_isTyping(e.target) && _sectionEl && _sectionEl.isConnected && !_sectionEl.classList.contains('hub-tm-hidden')) {
       if (e.key.toLowerCase() === 'c') _clipCopy(e); else _clipPaste(e);
       return;
     }
     if ((e.key === 'Delete' || e.key === 'Backspace') && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !e.isComposing && !e.repeat &&
-        !_modalStack.length && !_isTyping(e.target) && _sectionEl && _sectionEl.isConnected && !_sectionEl.classList.contains('hub-tm-hidden') &&
-        !(_ibx && _ibx.active) && !(_drag && _drag.active)) {
+        (!_modalStack.length || inTlStudio) && !_isTyping(e.target) && _sectionEl && _sectionEl.isConnected && !_sectionEl.classList.contains('hub-tm-hidden') &&
+        !(_ibx && _ibx.active) && !(_drag && _drag.active) && !(_tlDrag && _tlDrag.active)) {
       const a = document.activeElement, foc = a && a.closest ? a.closest('.hub-tm-ibx-item') : null;
-      const inGrid = !!(e.target.closest && e.target.closest('#hub-tm-grid-scroll'));
+      const inGrid = !!(e.target.closest && e.target.closest('#hub-tm-grid-scroll, #hub-tm-timeline-list'));
       const id = foc && _sectionEl.contains(foc) ? foc.getAttribute('data-ibx-id') : (!inGrid && _ibxSelId && _ibxById(_ibxSelId) ? _ibxSelId : '');
       if (id && _ibxById(id)) { e.preventDefault(); _ibxMenuClose(); _ibxRemove(id); return; }
     }
@@ -1395,12 +1434,15 @@ const timeManagementModule = (function () {
         return;
       }
       if (_ibxMenuEl && !_ibxMenuEl.hidden) { e.preventDefault(); e.stopPropagation(); _ibxMenuClose(true); return; }
+      if (_tlDrag && _tlDrag.active) { e.preventDefault(); _tlDragEnd(); return; }
       if (_ibx && _ibx.active) { e.preventDefault(); _ibxEnd(); return; }
       if (_wkd && _wkd.active) { e.preventDefault(); _wkEnd(); return; }
       if (_drag && _drag.active) { e.preventDefault(); _cancelDrag(); return; }
       const top = _modalStack[_modalStack.length - 1];
       if (top) {
         e.preventDefault();
+        if (top.id === 'hub-tm-timeline-drawer' && _tl.editId) { _tlQuickEditCancel(); return; }
+        if (top.id === 'hub-tm-timeline-drawer' && _tl.slotPick) { _tl.slotPick = null; _renderTimeline(); return; }
         if (top.id === 'hub-tm-confirm-modal') _closeConfirm(); else _closeModal(top);
       }
       return;
@@ -1436,7 +1478,7 @@ const timeManagementModule = (function () {
     if (i > -1) _modalStack.splice(i, 1);
     if (el.id === 'hub-tm-settings-modal') _stopSample();
     if (el.id === 'hub-tm-focus-panel' && _focusTimer) { clearInterval(_focusTimer); _focusTimer = null; }
-    if (el.id === 'hub-tm-timeline-drawer') { _el('#hub-tm-timeline-scrim').classList.remove('is-open'); if (_tlTimer) { clearInterval(_tlTimer); _tlTimer = null; } }
+    if (el.id === 'hub-tm-timeline-drawer') { _el('#hub-tm-timeline-scrim').classList.remove('is-open'); if (_tlTimer) { clearInterval(_tlTimer); _tlTimer = null; } _tlDragEnd(); _tl.editId = ''; _tl.qe = null; _tl.slotPick = null; _ibxMenuClose(); }
     const back = _returnFocus.get(el);
     _returnFocus.delete(el);
     if (back && back.isConnected && typeof back.focus === 'function') back.focus({ preventScroll: true });
@@ -2998,9 +3040,11 @@ const timeManagementModule = (function () {
     if (btn) { btn.setAttribute('aria-pressed', String(_ibxOpen)); btn.setAttribute('aria-label', 'Inbox' + (n ? ', ' + n + ' waiting' : '')); }
     if (panel) panel.classList.toggle('is-open', _ibxOpen);
     const ae = document.activeElement;
-    if (!force && ae && ae.classList && ae.classList.contains('hub-tm-ibx-edit') && list.contains(ae)) return;   // a title is being edited
-    list.innerHTML = n ? _ibxView().map(_ibxItemHtml).join('')
-      : '<li class="hub-tm-ibx-empty">Nothing waiting.<br>Jot ideas here as they come. Pick the time later.</li>';
+    if (!(!force && ae && ae.classList && ae.classList.contains('hub-tm-ibx-edit') && list.contains(ae))) {   // a title is being edited
+      list.innerHTML = n ? _ibxView().map(_ibxItemHtml).join('')
+        : '<li class="hub-tm-ibx-empty">Nothing waiting.<br>Jot ideas here as they come. Pick the time later.</li>';
+    }
+    _tlPaintInbox(force);
   }
   function _ibxToggle(open, focus) {
     _ibxOpen = !!open;
@@ -3009,12 +3053,14 @@ const timeManagementModule = (function () {
     if (_ibxOpen && focus) { const i = _el('#tm-ibx-input'); if (i) i.focus({ preventScroll: true }); }
   }
   function _ibxFocus() {
+    if (_el('#hub-tm-timeline-drawer.is-open')) { _tlToggleInbox(); return; }
     _ibxToggle(true);
     const i = _el('#tm-ibx-input');
     if (i) { i.focus(); i.select(); }
   }
-  function _ibxRefocus(id, sel) {
-    const n = _el('.hub-tm-ibx-item[data-ibx-id="' + id + '"] ' + sel);
+  function _ibxRefocus(id, sel, root) {
+    const scope = (root && root.nodeType === 1) ? root : document;
+    const n = scope.querySelector('.hub-tm-ibx-item[data-ibx-id="' + id + '"] ' + sel);
     if (n) n.focus({ preventScroll: true });
   }
 
@@ -3132,8 +3178,11 @@ const timeManagementModule = (function () {
       _closeModal(_el('#hub-tm-details-modal'));
       _renderGrid({ animate: false, scroll: false });
       _ibxRender(true); _tlRefresh();
-      const ne = _el('.hub-tm-ibx-item[data-ibx-id="' + it.id + '"]');
-      if (ne) { ne.classList.add('is-new'); try { ne.scrollIntoView({ block: 'nearest' }); } catch (_) {} setTimeout(function () { ne.classList.remove('is-new'); }, 1400); }
+      _all('.hub-tm-ibx-item[data-ibx-id="' + it.id + '"]').forEach(function (ne) {
+        ne.classList.add('is-new');
+        try { ne.scrollIntoView({ block: 'nearest' }); } catch (_) {}
+        setTimeout(function () { ne.classList.remove('is-new'); }, 1400);
+      });
       _toast('Back in the Inbox · ' + it.title, {
         action: 'Undo',
         onAction: function () {
@@ -3308,47 +3357,48 @@ const timeManagementModule = (function () {
   function _ibxSelect(id) {
     _ibxSelId = id || '';
     _all('.hub-tm-ibx-item.is-sel').forEach(function (n) { if (n.getAttribute('data-ibx-id') !== _ibxSelId) n.classList.remove('is-sel'); });
-    const n = _ibxSelId && _el('.hub-tm-ibx-item[data-ibx-id="' + _ibxSelId + '"]');
-    if (n) n.classList.add('is-sel');
+    if (_ibxSelId) _all('.hub-tm-ibx-item[data-ibx-id="' + _ibxSelId + '"]').forEach(function (n) { n.classList.add('is-sel'); });
   }
-  function _ibxClick(e) {
+  function _ibxListClick(e, listRoot, defaultDate) {
     if (performance.now() < _ibxSuppress) return;
     const li = e.target.closest('.hub-tm-ibx-item');
     if (!li) return;
     const id = li.getAttribute('data-ibx-id'), it = _ibxById(id), kb = e.detail === 0;
     if (!it) return;
     if (!e.target.closest('[data-ibx-del]')) _ibxSelect(id);
+    const scope = listRoot || document;
     const after = function () {                                              // keyboard users: keep focus somewhere useful
       if (!kb) return;
-      const n = _el('.hub-tm-ibx-item [data-ibx-go]') || _el('#tm-ibx-input');
+      const n = scope.querySelector('.hub-tm-ibx-item [data-ibx-go]') || _el('#tm-tl-ibx-input') || _el('#tm-ibx-input');
       if (n) n.focus({ preventScroll: true });
     };
-    if (e.target.closest('[data-ibx-go]')) { _ibxMenuClose(); _ibxAuto(id); after(); return; }
+    if (e.target.closest('[data-ibx-go]')) { _ibxMenuClose(); _ibxAuto(id, defaultDate); after(); return; }
     if (e.target.closest('[data-ibx-del]')) { _ibxRemove(id); after(); return; }
     if (e.target.closest('[data-ibx-more]')) {
-      const same = _ibxMenuEl && !_ibxMenuEl.hidden && _ibxMenuId === id;
+      const same = _ibxMenuEl && !_ibxMenuEl.hidden && _ibxMenuId === id && _ibxMenuRoot === scope;
       if (same) _ibxMenuClose(true); else _ibxMenuOpen(id, e.target.closest('[data-ibx-more]'), kb);
       return;
     }
     if (e.target.closest('[data-ibx-pri]')) {
       it.pri = IBX_PRI[(IBX_PRI.indexOf(it.pri) + 1) % IBX_PRI.length];
-      _scheduleSave(); _ibxRender(true); _ibxRefocus(id, '[data-ibx-pri]');
+      _scheduleSave(); _ibxRender(true); _ibxRefocus(id, '[data-ibx-pri]', scope);
       return;
     }
     if (e.target.closest('[data-ibx-tag]')) {
       const tags = _allTags(), k = tags.findIndex(function (t) { return t.id === it.tagId; });
       it.tagId = tags[(k + 1) % tags.length].id;
-      _scheduleSave(); _ibxRender(true); _ibxRefocus(id, '[data-ibx-tag]');
+      _scheduleSave(); _ibxRender(true); _ibxRefocus(id, '[data-ibx-tag]', scope);
       return;
     }
     if (e.target.closest('[data-ibx-dur]')) {
       const k = SB_DURS.findIndex(function (m) { return m > it.dur; });
       it.dur = k < 0 ? SB_DURS[0] : SB_DURS[k];
-      _scheduleSave(); _ibxRender(true); _ibxRefocus(id, '[data-ibx-dur]');
+      _scheduleSave(); _ibxRender(true); _ibxRefocus(id, '[data-ibx-dur]', scope);
       return;
     }
     if (e.target.closest('[data-ibx-title]')) _ibxEdit(li);
   }
+  function _ibxClick(e) { _ibxListClick(e, _el('#tm-ibx-list')); }
   /* ── priority · duplicate ── */
   function _ibxSetPri(id, pri) {
     const it = _ibxById(id);
@@ -3370,18 +3420,19 @@ const timeManagementModule = (function () {
   }
 
   /* ── ⋮ menu: one floating menu, rebuilt for the item it belongs to ── */
-  let _ibxMenuEl = null, _ibxMenuId = '';
+  let _ibxMenuEl = null, _ibxMenuId = '', _ibxMenuRoot = null;
   function _ibxMenuClose(refocus) {
     if (!_ibxMenuEl || _ibxMenuEl.hidden) return;
     _ibxMenuEl.hidden = true;
-    const id = _ibxMenuId;
-    _ibxMenuId = '';
-    const b = _el('.hub-tm-ibx-item[data-ibx-id="' + id + '"] [data-ibx-more]');
+    const id = _ibxMenuId, root = _ibxMenuRoot || document;
+    _ibxMenuId = ''; _ibxMenuRoot = null;
+    const b = root.querySelector('.hub-tm-ibx-item[data-ibx-id="' + id + '"] [data-ibx-more]');
     if (b) { b.setAttribute('aria-expanded', 'false'); if (refocus) b.focus({ preventScroll: true }); }
   }
   function _ibxMenuOpen(id, btn, focusFirst) {
     const it = _ibxById(id);
     if (!it || !btn || !_sectionEl) return;
+    _ibxMenuRoot = btn.closest('.hub-tm-ibx-list') || document;
     if (!_ibxMenuEl) {
       _ibxMenuEl = document.createElement('div');
       _ibxMenuEl.className = 'hub-tm-ibx-menu';
@@ -3419,9 +3470,9 @@ const timeManagementModule = (function () {
     if (focusFirst) { const f = m.querySelector('.hub-tm-ibx-mi'); if (f) f.focus({ preventScroll: true }); }
   }
   function _ibxMenuAct(mi) {
-    const id = _ibxMenuId, act = mi.getAttribute('data-mi');
+    const id = _ibxMenuId, act = mi.getAttribute('data-mi'), root = _ibxMenuRoot;
     if (!id) return;
-    if (act === 'pri') { _ibxSetPri(id, mi.getAttribute('data-pri')); _ibxMenuClose(); _ibxRefocus(id, '[data-ibx-more]'); return; }
+    if (act === 'pri') { _ibxSetPri(id, mi.getAttribute('data-pri')); _ibxMenuClose(); _ibxRefocus(id, '[data-ibx-more]', root); return; }
     _ibxMenuClose();
     if (act === 'edit') _ibxEditOpen(id);
     else if (act === 'dup') _ibxDuplicate(id);
@@ -3477,7 +3528,7 @@ const timeManagementModule = (function () {
     _scheduleSave();
     _closeModal(dlg);
     _ibxRender(true);
-    _ibxRefocus(id, '[data-ibx-more]');
+    _ibxRefocus(id, '[data-ibx-more]', _el('#hub-tm-timeline-drawer.is-open #tm-tl-ibx-list') || _el('#tm-ibx-list'));
   }
   function _bindIbxMenuAndDialog(sig) {
     const dlg = _el('#hub-tm-ibx-modal');
@@ -3512,12 +3563,8 @@ const timeManagementModule = (function () {
       if (e.key === 'Enter' && (!ta || e.ctrlKey || e.metaKey)) { e.preventDefault(); _ibxEditSave(); }
     }, sig);
   }
-  function _bindInbox() {
-    const sig = { signal: _ui.signal };
-    const btn = _el('#tm-btn-inbox'), list = _el('#tm-ibx-list'), inp = _el('#tm-ibx-input'), add = _el('#tm-ibx-add'), close = _el('#tm-ibx-close');
-    if (!btn || !list || !inp || !add || !close) return;
-    btn.addEventListener('click', function () { _ibxToggle(!_ibxOpen, true); }, sig);
-    close.addEventListener('click', function () { _ibxToggle(false); btn.focus({ preventScroll: true }); }, sig);
+  function _ibxBindInput(inp, add, sig) {
+    if (!inp || !add) return;
     const commit = function () { if (_ibxAddMany([inp.value])) inp.value = ''; inp.focus({ preventScroll: true }); };
     add.addEventListener('click', commit, sig);
     inp.addEventListener('keydown', function (e) {
@@ -3531,6 +3578,14 @@ const timeManagementModule = (function () {
       e.preventDefault();
       _ibxAddMany(txt.split(/\r?\n/));
     }, sig);
+  }
+  function _bindInbox() {
+    const sig = { signal: _ui.signal };
+    const btn = _el('#tm-btn-inbox'), list = _el('#tm-ibx-list'), inp = _el('#tm-ibx-input'), add = _el('#tm-ibx-add'), close = _el('#tm-ibx-close');
+    if (!btn || !list || !inp || !add || !close) return;
+    btn.addEventListener('click', function () { _ibxToggle(!_ibxOpen, true); }, sig);
+    close.addEventListener('click', function () { _ibxToggle(false); btn.focus({ preventScroll: true }); }, sig);
+    _ibxBindInput(inp, add, sig);
     list.addEventListener('pointerdown', _ibxDown, sig);
     list.addEventListener('pointermove', _ibxMove, sig);
     list.addEventListener('pointerup', _ibxUp, sig);
@@ -6916,7 +6971,242 @@ const timeManagementModule = (function () {
   function _tlLate(b, today, nm) { if (b.done) return false; if (b.date < today) return true; return b.date === today && _toMins(b.endTime) <= nm; }
   function _tlLive(b, today, nm) { return !b.done && b.date === today && _toMins(b.startTime) <= nm && nm < _toMins(b.endTime); }
   function _tlSet(node, html) { if (node && node._html !== html) { node.innerHTML = html; node._html = html; return true; } return false; }
-  function _tlRefresh() { const d = _el('#hub-tm-timeline-drawer'); if (d && d.classList.contains('is-open')) _renderTimeline(); }
+  function _tlRefresh() { const d = _el('#hub-tm-timeline-drawer'); if (d && d.classList.contains('is-open')) { _renderTimeline(); _tlPaintInbox(); } }
+
+  function _tlApplySplit() {
+    const d = _el('#hub-tm-timeline-drawer'), b = _el('#tm-tl-inbox-toggle');
+    if (!d) return;
+    d.classList.toggle('has-inbox', !!_tl.inbox);
+    d.setAttribute('data-pane', _tl.pane === 'inbox' ? 'inbox' : 'timeline');
+    if (b) b.setAttribute('aria-pressed', _tl.inbox ? 'true' : 'false');
+    _all('#hub-tm-tl-mtabs [data-tl-pane]').forEach(function (t) {
+      t.setAttribute('aria-selected', t.getAttribute('data-tl-pane') === (_tl.pane === 'inbox' ? 'inbox' : 'timeline') ? 'true' : 'false');
+    });
+  }
+  function _tlToggleInbox(force) {
+    _tl.inbox = typeof force === 'boolean' ? force : !_tl.inbox;
+    if (_tl.inbox && typeof window !== 'undefined' && window.innerWidth < 900) _tl.pane = 'inbox';
+    else if (!_tl.inbox && _tl.pane === 'inbox') _tl.pane = 'timeline';
+    _tlApplySplit();
+    _tlSavePrefs();
+    _tlPaintInbox(true);
+    _renderTimeline();
+    if (_tl.inbox) {
+      const i = _el('#tm-tl-ibx-input');
+      if (i && (typeof window === 'undefined' || window.innerWidth >= 900 || _tl.pane === 'inbox')) setTimeout(function () { if (i && i.offsetParent) i.focus({ preventScroll: true }); }, 40);
+    }
+  }
+  function _tlPaintInbox(force) {
+    const d = _el('#hub-tm-timeline-drawer');
+    if (!d) return;
+    const nAll = _inbox.length;
+    const badge = _el('#tm-tl-ibx-badge'), mtabN = _el('#tm-tl-mtab-n'), cnt = _el('#tm-tl-ibx-count'), sum = _el('#tm-tl-ibx-sum');
+    if (badge) { badge.hidden = !nAll; badge.textContent = nAll > 99 ? '99+' : String(nAll); }
+    if (mtabN) { mtabN.hidden = !nAll; mtabN.textContent = nAll > 99 ? '99+' : String(nAll); }
+    if (cnt) cnt.textContent = nAll ? String(nAll) : '';
+    if (!d.classList.contains('is-open')) return;
+    if (_tlDrag && _tlDrag.active && _tlDrag.kind === 'ibx2tl') return;
+    _all('#tm-tl-ibx-pris [data-tl-ibx-pri]').forEach(function (b) {
+      b.setAttribute('aria-pressed', b.getAttribute('data-tl-ibx-pri') === _tl.ibxPri ? 'true' : 'false');
+    });
+    const tagSel = _el('#tm-tl-ibx-tag');
+    if (tagSel) {
+      if (_tl.ibxTag !== 'all' && !_tagById(_tl.ibxTag)) _tl.ibxTag = 'all';
+      const tags = _allTags(), tSig = tags.map(function (t) { return t.id + ':' + t.label; }).join('|');
+      if (tagSel._sig !== tSig) {
+        tagSel.innerHTML = '<option value="all">All tags</option>' + tags.map(function (t) { return '<option value="' + _esc(t.id) + '">' + _esc(t.label) + '</option>'; }).join('');
+        tagSel._sig = tSig;
+      }
+      tagSel.value = _tl.ibxTag;
+    }
+    const view = _ibxView().filter(function (it) {
+      if (_tl.ibxPri !== 'all' && (it.pri || 'normal') !== _tl.ibxPri) return false;
+      if (_tl.ibxTag !== 'all' && it.tagId !== _tl.ibxTag) return false;
+      return true;
+    });
+    const mins = view.reduce(function (a, i) { return a + i.dur; }, 0);
+    if (sum) sum.textContent = view.length ? view.length + ' · ' + _fmtDur(mins) : (nAll ? '0 match' : 'Empty');
+    const list = _el('#tm-tl-ibx-list');
+    if (!list) return;
+    const ae = document.activeElement;
+    if (!force && ae && ae.classList && ae.classList.contains('hub-tm-ibx-edit') && list.contains(ae)) return;
+    list.innerHTML = view.length
+      ? view.map(_ibxItemHtml).join('')
+      : '<li class="hub-tm-ibx-empty">' + (nAll ? 'No Inbox tasks match this filter.' : 'Inbox is empty.<br>Type above or drag a block here from Timeline.') + '</li>';
+  }
+
+  /* ---- Free slot & Inline Quick-Edit helpers ---- */
+  function _tlSlotStart(date, s, e, dur, today, nm) {
+    const need = Math.max(MIN_DUR, dur || 30);
+    let start = s;
+    if (date === today && typeof nm === 'number') {
+      const nowSn = Math.ceil(nm / SNAP) * SNAP;
+      if (nowSn > start && e - nowSn >= MIN_DUR) start = nowSn;
+    }
+    const end = Math.min(start + need, e);
+    return { date: date, s: start, e: end, fits: (end - start) >= need, ok: (end - start) >= MIN_DUR };
+  }
+  function _tlDayFreeWindows(date, items, today, nm, minGap) {
+    const gapMin = minGap || 30, wins = [];
+    const sorted = (items || []).slice().sort(function (a, b) { return _toMins(a.startTime) - _toMins(b.startTime); });
+    const dayMinStart = 6 * 60;
+    if (!sorted.length) {
+      const floor = date === today ? Math.max(dayMinStart, Math.ceil((nm || 0) / SNAP) * SNAP) : 9 * 60;
+      if (DAY_MINS - floor >= gapMin) wins.push({ kind: 'open', s: floor, e: DAY_MINS });
+      return wins;
+    }
+    const firstS = _toMins(sorted[0].startTime);
+    if (firstS - dayMinStart >= Math.max(gapMin, 30)) wins.push({ kind: 'lead', s: dayMinStart, e: firstS });
+    for (let i = 1; i < sorted.length; i++) {
+      const prevE = _toMins(sorted[i - 1].endTime), nextS = _toMins(sorted[i].startTime);
+      if (nextS - prevE >= gapMin) wins.push({ kind: 'between', afterId: sorted[i - 1].id, s: prevE, e: nextS });
+    }
+    const lastE = _toMins(sorted[sorted.length - 1].endTime);
+    if (date >= today && DAY_MINS - lastE >= gapMin) wins.push({ kind: 'tail', s: lastE, e: DAY_MINS });
+    return wins;
+  }
+  function _tlSuggestSlots(date, dur, exceptId, today, nm, othersOverride) {
+    const need = Math.max(MIN_DUR, dur || 30);
+    const o = (othersOverride || _others(date, exceptId)).slice().sort(function (a, b) { return a.s - b.s; });
+    const minStart = date === today ? Math.max(6 * 60, Math.ceil((nm || 0) / SNAP) * SNAP) : 8 * 60;
+    const merged = [];
+    o.forEach(function (x) {
+      const prev = merged[merged.length - 1];
+      if (prev && x.s <= prev.e) prev.e = Math.max(prev.e, x.e);
+      else merged.push({ s: x.s, e: x.e });
+    });
+    const slots = [];
+    let cur = minStart;
+    for (let i = 0; i < merged.length && slots.length < 5; i++) {
+      if (merged[i].e <= cur) continue;
+      if (merged[i].s - cur >= need) slots.push({ s: cur, e: cur + need });
+      cur = Math.max(cur, merged[i].e);
+    }
+    if (slots.length < 5 && DAY_MINS - cur >= need) slots.push({ s: cur, e: cur + need });
+    if (!slots.length && date === today) {
+      let c2 = 6 * 60;
+      for (let i = 0; i < merged.length && slots.length < 4; i++) {
+        if (merged[i].e <= c2) continue;
+        if (merged[i].s - c2 >= need) slots.push({ s: c2, e: c2 + need });
+        c2 = Math.max(c2, merged[i].e);
+      }
+    }
+    return slots;
+  }
+
+  function _tlQeValid(q) {
+    if (!q || !/^\d{4}-\d{2}-\d{2}$/.test(q.date || '')) return { err: 'Pick a valid date.' };
+    if (!/^\d{2}:\d{2}$/.test(q.start || '') || !/^\d{2}:\d{2}$/.test(q.end || '')) return { err: 'Enter valid start & end times.' };
+    const s = _toMins(q.start), e = _toMins(q.end);
+    if (e - s < MIN_DUR) return { err: 'Duration must be at least ' + MIN_DUR + ' min.' };
+    const hit = _overlap(q.date, s, e, q.id);
+    if (hit) return { err: 'Overlaps “' + (hit.title || _tagOrFallback(hit.tagId).label) + '” (' + hit.startTime + '–' + hit.endTime + ').' };
+    return { err: '', s: s, e: e };
+  }
+  function _tlQeSlotsHtml(q) {
+    const dur = (/^\d{2}:\d{2}$/.test(q.start) && /^\d{2}:\d{2}$/.test(q.end)) ? Math.max(MIN_DUR, _toMins(q.end) - _toMins(q.start)) : 30;
+    const slots = /^\d{4}-\d{2}-\d{2}$/.test(q.date || '') ? _tlSuggestSlots(q.date, dur, q.id, _todayStr(), _tlNowMins()) : [];
+    if (!slots.length) return '<span class="hub-tm-tl-qe-noslot">No open ' + _fmtDur(dur) + ' slots on this day.</span>';
+    return slots.map(function (sl) {
+      const on = _toTime(sl.s) === q.start && _toTime(sl.e) === q.end;
+      return '<button type="button" class="hub-tm-tl-qe-chip' + (on ? ' is-on' : '') + '" data-tl-qe-slot="' + sl.s + ',' + sl.e + '" title="Snap to ' + _toTime(sl.s) + '–' + _toTime(sl.e) + '">' + _toTime(sl.s) + '–' + _toTime(sl.e) + '</button>';
+    }).join('');
+  }
+  function _tlQuickEditOpen(id) {
+    if (_tl.editId === id) { _tlQuickEditCancel(); return; }
+    const b = _blockById(id);
+    if (!b) return;
+    _tl.editId = id;
+    _tl.slotPick = null;
+    _tl.qe = { id: b.id, title: b.title || '', date: b.date, start: b.startTime, end: b.endTime, tagId: _tagById(b.tagId) ? b.tagId : 'work' };
+    _renderTimeline();
+    const inp = _el('#tm-tl-qe-title');
+    if (inp) { inp.focus({ preventScroll: true }); inp.select(); }
+  }
+  function _tlQuickEditCancel() {
+    const backId = _tl.editId;
+    _tl.editId = ''; _tl.qe = null;
+    _renderTimeline();
+    if (backId) {
+      const b = _el('#hub-tm-timeline-drawer [data-tl-qedit="' + backId + '"]');
+      if (b) b.focus({ preventScroll: true });
+    }
+  }
+  function _tlQuickEditSync(refreshSlots) {
+    const q = _tl.qe, box = _el('#tm-tl-qedit-card');
+    if (!q || !box) return;
+    const di = box.querySelector('[data-tl-qe="date"]'), si = box.querySelector('[data-tl-qe="start"]'), ei = box.querySelector('[data-tl-qe="end"]');
+    if (di && di.value !== q.date) di.value = q.date;
+    if (si && si.value !== q.start) si.value = q.start;
+    if (ei && ei.value !== q.end) ei.value = q.end;
+    const curDur = (/^\d{2}:\d{2}$/.test(q.start) && /^\d{2}:\d{2}$/.test(q.end)) ? (_toMins(q.end) - _toMins(q.start)) : 0;
+    box.querySelectorAll('[data-tl-qe-dur]').forEach(function (btn) { btn.setAttribute('aria-pressed', parseInt(btn.getAttribute('data-tl-qe-dur'), 10) === curDur ? 'true' : 'false'); });
+    const today = _todayStr(), tmr = _dateToStr(_addDays(_parseDate(today), 1));
+    box.querySelectorAll('[data-tl-qe-day]').forEach(function (btn) {
+      const want = btn.getAttribute('data-tl-qe-day') === 'today' ? today : tmr;
+      btn.setAttribute('aria-pressed', q.date === want ? 'true' : 'false');
+    });
+    box.querySelectorAll('[data-tl-qe-tag]').forEach(function (btn) { btn.setAttribute('aria-pressed', btn.getAttribute('data-tl-qe-tag') === q.tagId ? 'true' : 'false'); });
+    if (refreshSlots) {
+      const slBox = _el('#tm-tl-qe-slots');
+      if (slBox) slBox.innerHTML = _tlQeSlotsHtml(q);
+    }
+    const v = _tlQeValid(q), err = _el('#tm-tl-qe-err'), save = _el('#tm-tl-qe-save');
+    if (err) { err.textContent = v.err || ''; err.hidden = !v.err; }
+    if (save) save.disabled = !!v.err;
+  }
+  function _tlQuickEditShift(delta) {
+    const q = _tl.qe; if (!q || !/^\d{2}:\d{2}$/.test(q.start) || !/^\d{2}:\d{2}$/.test(q.end)) return;
+    const dur = Math.max(MIN_DUR, _toMins(q.end) - _toMins(q.start));
+    const s = _clamp(_toMins(q.start) + delta, 0, DAY_MINS - dur);
+    q.start = _toTime(s); q.end = _toTime(s + dur);
+    _tlQuickEditSync(true);
+  }
+  function _tlQuickEditDur(mins) {
+    const q = _tl.qe; if (!q || !/^\d{2}:\d{2}$/.test(q.start)) return;
+    const dur = _clamp(mins, MIN_DUR, 720);
+    let s = _toMins(q.start);
+    if (s + dur > DAY_MINS) s = Math.max(0, DAY_MINS - dur);
+    q.start = _toTime(s); q.end = _toTime(s + dur);
+    _tlQuickEditSync(true);
+  }
+  function _tlQuickEditDay(which) {
+    const q = _tl.qe; if (!q) return;
+    const today = _todayStr();
+    q.date = which === 'today' ? today : _dateToStr(_addDays(_parseDate(today), 1));
+    _tlQuickEditSync(true);
+  }
+  function _tlQuickEditSlot(s, e) {
+    const q = _tl.qe; if (!q) return;
+    q.start = _toTime(s); q.end = _toTime(e);
+    _tlQuickEditSync(true);
+  }
+  function _tlQuickEditTag(tagId) {
+    const q = _tl.qe; if (!q || !_tagById(tagId)) return;
+    q.tagId = tagId;
+    _tlQuickEditSync(false);
+  }
+  function _tlQuickEditSave() {
+    const q = _tl.qe, b = q && _blockById(q.id);
+    if (!q || !b) { _tlQuickEditCancel(); return; }
+    const v = _tlQeValid(q);
+    if (v.err) { _tlQuickEditSync(false); return; }
+    const nextTitle = String(q.title || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    b.title = nextTitle || _tagOrFallback(q.tagId).label;
+    b.date = q.date;
+    b.startTime = _toTime(v.s);
+    b.endTime = _toTime(v.e);
+    b.tagId = _tagById(q.tagId) ? q.tagId : b.tagId;
+    const bid = b.id;
+    _tl.editId = ''; _tl.qe = null;
+    _qpHN = -1;
+    _scheduleSave();
+    _renderGrid({ animate: false, scroll: false });
+    _renderTimeline();
+    const btn = _el('#hub-tm-timeline-drawer [data-tl-qedit="' + bid + '"]');
+    if (btn) btn.focus({ preventScroll: true });
+    _toast('Updated ' + b.startTime + '–' + b.endTime + ' · ' + b.title);
+  }
 
   function _tlLoadPrefs() {
     const p = _lsJson(TL_KEY) || {};
@@ -6926,7 +7216,9 @@ const timeManagementModule = (function () {
     _tl.pastOpen = p.pastOpen === true;
     if (p.dens === 'compact') _tl.dens = 'compact';
     if (TL_CAPS.indexOf(p.cap) > -1) _tl.cap = p.cap;
+    _tl.inbox = typeof p.inbox === 'boolean' ? p.inbox : (typeof window !== 'undefined' && window.innerWidth >= 960);
     _tlApplyDens();
+    _tlApplySplit();
   }
   function _tlApplyDens() {
     const d = _el('#hub-tm-timeline-drawer'), b = _el('#tm-timeline-dens');
@@ -6934,32 +7226,241 @@ const timeManagementModule = (function () {
     if (b) b.setAttribute('aria-pressed', _tl.dens === 'compact' ? 'true' : 'false');
   }
   function _tlSavePrefs() {
-    _lsSet(TL_KEY, JSON.stringify({ range: _tl.range, status: _tl.status, sort: _el('#tm-timeline-sort').value, pastOpen: _tl.pastOpen, dens: _tl.dens, cap: _tl.cap }));
+    _lsSet(TL_KEY, JSON.stringify({ range: _tl.range, status: _tl.status, sort: _el('#tm-timeline-sort').value, pastOpen: _tl.pastOpen, dens: _tl.dens, cap: _tl.cap, inbox: _tl.inbox }));
   }
 
   function _openTimeline() {
     _el('#tm-timeline-search').value = _tl.q;
     _rmApplySkin(); _rmWatchSkin();
+    _tlApplySplit();
+    _tlPaintInbox(true);
     _renderTimeline();
     _el('#hub-tm-timeline-scrim').classList.add('is-open');
     _openModal(_el('#hub-tm-timeline-drawer'), '#tm-btn-timeline-close');
     if (_tlTimer) clearInterval(_tlTimer);
-    _tlTimer = setInterval(_renderTimeline, 30000);          // keeps NOW / countdown / overdue honest
+    _tlTimer = setInterval(function () { _renderTimeline(true); }, 30000);          // keeps NOW / countdown / overdue honest
+  }
+
+  /* ---- Bidirectional Timeline ⇄ Inbox pointer drag ---- */
+  function _tlDragClearMarks(d) {
+    if (d && d.hitEl) { d.hitEl.classList.remove('is-slot-hit', 'is-day-hit', 'is-tl-drop'); d.hitEl = null; }
+  }
+  function _tlDragBegin() {
+    const d = _tlDrag; if (!d) return;
+    const drawer = _el('#hub-tm-timeline-drawer');
+    if (!drawer) { _tlDragEnd(); return; }
+    if (d.el && d.el.setPointerCapture) { try { d.el.setPointerCapture(d.pointerId); } catch (_) {} }
+    const g = document.createElement('div');
+    let title = '', durTxt = '', sty = '';
+    if (d.kind === 'ibx2tl') {
+      const it = _ibxById(d.id);
+      if (!it) { _tlDragEnd(); return; }
+      title = it.title;
+      durTxt = _fmtDur(it.dur);
+      sty = _tagStyle(_tagOrFallback(it.tagId));
+      g.className = 'hub-tm-ibx-ghost';
+      drawer.classList.add('is-tl-ibx-drag');
+      if (typeof window !== 'undefined' && window.innerWidth < 900 && _tl.pane === 'inbox') {
+        _tl.pane = 'timeline';
+        _tlApplySplit();
+      }
+      const today = _todayStr(), nm = _tlNowMins();
+      _all('#hub-tm-timeline-list .hub-tm-tl-gap').forEach(function (gap) {
+        const ds = gap.getAttribute('data-tl-slot-date'), s = parseInt(gap.getAttribute('data-tl-slot-s'), 10), e = parseInt(gap.getAttribute('data-tl-slot-e'), 10);
+        const pl = _tlSlotStart(ds, s, e, it.dur, today, nm);
+        gap.classList.toggle('is-slot-fit', pl.ok && pl.fits);
+        gap.classList.toggle('is-slot-tight', pl.ok && !pl.fits);
+      });
+    } else {
+      const b = _blockById(d.id);
+      if (!b || b.done) { _tlDragEnd(); return; }
+      const tg = _tagOrFallback(b.tagId);
+      title = b.title || tg.label;
+      durTxt = _fmtDur(_tlDur(b));
+      sty = _tagStyle(tg);
+      g.className = 'hub-tm-ibx-ghost hub-tm-ibx-ghost--blk';
+      drawer.classList.add('is-tl-blk-drag');
+    }
+    g.setAttribute('aria-hidden', 'true');
+    g.style.cssText = sty;
+    g.innerHTML = '<span class="hub-tm-ibx-ghost-t"></span><span class="hub-tm-ibx-ghost-d"></span>';
+    g.firstChild.textContent = title;
+    g.lastChild.textContent = durTxt;
+    d.baseDur = durTxt;
+    _sectionEl.appendChild(g);
+    d.ghost = g;
+    if (d.el) d.el.classList.add('is-lifted');
+    _tlDragPlace();
+    if (!d.scrollTimer) {
+      d.scrollTimer = setInterval(function () {
+        if (_tlDrag !== d || !d.active) return;
+        const sc = _el('#hub-tm-tl-scroll');
+        if (!sc) return;
+        const r = sc.getBoundingClientRect(), edge = 52;
+        if (d.x < r.left || d.x > r.right || d.y < r.top || d.y > r.bottom) return;
+        let dy = 0;
+        if (d.y < r.top + edge) dy = -Math.ceil((r.top + edge - d.y) / 6);
+        else if (d.y > r.bottom - edge) dy = Math.ceil((d.y - (r.bottom - edge)) / 6);
+        if (dy) { sc.scrollTop += _clamp(dy, -16, 16); _tlDragPlace(); }
+      }, 16);
+    }
+  }
+  function _tlDragPlace() {
+    const d = _tlDrag;
+    if (!d || !d.ghost) return;
+    d.ghost.style.transform = 'translate(' + Math.round(d.x + 14) + 'px,' + Math.round(d.y + 10) + 'px)';
+    _tlDragClearMarks(d);
+    const hit = document.elementFromPoint(d.x, d.y);
+    d.target = null;
+    if (d.kind === 'ibx2tl') {
+      const it = _ibxById(d.id);
+      const gap = hit && hit.closest && hit.closest('#hub-tm-timeline-list .hub-tm-tl-gap');
+      if (it && gap) {
+        const ds = gap.getAttribute('data-tl-slot-date'), s = parseInt(gap.getAttribute('data-tl-slot-s'), 10), e = parseInt(gap.getAttribute('data-tl-slot-e'), 10);
+        const pl = _tlSlotStart(ds, s, e, it.dur, _todayStr(), _tlNowMins());
+        if (pl.ok) {
+          d.target = { kind: 'slot', date: ds, s: pl.s, e: pl.e, fits: pl.fits };
+          d.hitEl = gap; gap.classList.add('is-slot-hit');
+          d.ghost.lastChild.textContent = _toTime(pl.s) + '–' + _toTime(pl.e);
+          d.ghost.classList.toggle('is-no', !pl.fits);
+          return;
+        }
+      }
+      const dayEl = hit && hit.closest && hit.closest('#hub-tm-timeline-list [data-tl-drop-day], #hub-tm-tl-week [data-tl-wd]');
+      const ds = dayEl && (dayEl.getAttribute('data-tl-drop-day') || dayEl.getAttribute('data-tl-wd'));
+      if (it && ds && /^\d{4}-\d{2}-\d{2}$/.test(ds)) {
+        d.target = { kind: 'day', date: ds };
+        d.hitEl = dayEl; dayEl.classList.add('is-day-hit');
+        d.ghost.lastChild.textContent = 'Auto · ' + _qpDateText(ds);
+        d.ghost.classList.remove('is-no');
+        return;
+      }
+      d.ghost.lastChild.textContent = d.baseDur || '';
+      d.ghost.classList.remove('is-no');
+    } else {
+      const drop = hit && hit.closest && hit.closest('#hub-tm-tl-inbox, #tm-tl-inbox-toggle, #hub-tm-tl-mtabs [data-tl-pane="inbox"]');
+      if (drop && drop.getClientRects().length) {
+        d.target = { kind: 'inbox' };
+        d.hitEl = drop; drop.classList.add('is-tl-drop');
+        d.ghost.classList.remove('is-no');
+      }
+    }
+  }
+  function _tlDragEnd() {
+    const d = _tlDrag;
+    if (!d) return;
+    if (d.timer) clearTimeout(d.timer);
+    if (d.scrollTimer) clearInterval(d.scrollTimer);
+    _tlDragClearMarks(d);
+    if (d.ghost && d.ghost.parentNode) d.ghost.parentNode.removeChild(d.ghost);
+    if (d.el) { d.el.classList.remove('is-lifted'); try { d.el.releasePointerCapture(d.pointerId); } catch (_) {} }
+    const drawer = _el('#hub-tm-timeline-drawer');
+    if (drawer) {
+      drawer.classList.remove('is-tl-ibx-drag', 'is-tl-blk-drag');
+      drawer.querySelectorAll('.is-slot-fit, .is-slot-tight, .is-slot-hit, .is-day-hit, .is-tl-drop').forEach(function (n) {
+        n.classList.remove('is-slot-fit', 'is-slot-tight', 'is-slot-hit', 'is-day-hit', 'is-tl-drop');
+      });
+    }
+    if (d.active) _tlDragSuppress = performance.now() + 300;
+    _tlDrag = null;
   }
 
   function _bindTimeline() {
-    const drawer = _el('#hub-tm-timeline-drawer');
+    const drawer = _el('#hub-tm-timeline-drawer'), sig = { signal: _ui.signal };
     _tlLoadPrefs();
-    _el('#tm-btn-timeline-close').addEventListener('click', function () { _closeModal(drawer); });
-    _el('#hub-tm-timeline-scrim').addEventListener('click', function () { _closeModal(drawer); });
-    _el('#tm-timeline-sort').addEventListener('change', function () { _tlSavePrefs(); _renderTimeline(); });
-    _el('#tm-timeline-search').addEventListener('input', function (e) { _tl.q = e.target.value; _renderTimeline(); });
-    _el('#tm-timeline-copy').addEventListener('click', _tlCopy);
-    _el('#tm-timeline-today').addEventListener('click', _tlJumpToday);
+    _el('#tm-btn-timeline-close').addEventListener('click', function () { _closeModal(drawer); }, sig);
+    _el('#hub-tm-timeline-scrim').addEventListener('click', function () { _closeModal(drawer); }, sig);
+    _el('#tm-timeline-sort').addEventListener('change', function () { _tlSavePrefs(); _renderTimeline(); }, sig);
+    _el('#tm-timeline-search').addEventListener('input', function (e) { _tl.q = e.target.value; _renderTimeline(); }, sig);
+    _el('#tm-timeline-copy').addEventListener('click', _tlCopy, sig);
+    _el('#tm-timeline-today').addEventListener('click', _tlJumpToday, sig);
+
+    // Split Inbox controls inside Timeline
+    _ibxBindInput(_el('#tm-tl-ibx-input'), _el('#tm-tl-ibx-add'), sig);
+    const ibxList = _el('#tm-tl-ibx-list'), ibxTag = _el('#tm-tl-ibx-tag');
+    if (ibxTag) ibxTag.addEventListener('change', function () { _tl.ibxTag = ibxTag.value || 'all'; _tlPaintInbox(true); }, sig);
+    if (ibxList) {
+      ibxList.addEventListener('click', function (e) {
+        if (performance.now() < _tlDragSuppress) return;
+        _ibxListClick(e, ibxList, _tl.day || undefined);
+      }, sig);
+      ibxList.addEventListener('scroll', function () { _ibxMenuClose(); }, { passive: true, signal: _ui.signal });
+      ibxList.addEventListener('keydown', function (e) {
+        const t = e.target;
+        if (t.hasAttribute && t.hasAttribute('data-ibx-title') && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); _ibxEdit(t.closest('.hub-tm-ibx-item')); }
+      }, sig);
+    }
+
+    // Bidirectional pointer drag (Inbox ⇄ Timeline)
+    drawer.addEventListener('pointerdown', function (e) {
+      if (_tlDrag || _ibx || _drag) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      const t = e.target;
+      if (t.closest && t.closest('button, input, select, textarea, label, a, .hub-tm-tl-qedit, .hub-tm-tl-ckadd, .hub-tm-tl-slotpick, .hub-tm-tl-panel')) return;
+      let kind = '', id = '', el = null;
+      const ibxLi = t.closest('#tm-tl-ibx-list .hub-tm-ibx-item');
+      if (ibxLi) {
+        id = ibxLi.getAttribute('data-ibx-id');
+        if (!_ibxById(id)) return;
+        kind = 'ibx2tl'; el = ibxLi;
+      } else if (!_tl.sel) {
+        const tlLi = t.closest('#hub-tm-timeline-list .hub-tm-tl-item:not(.is-done)');
+        if (!tlLi) return;
+        id = tlLi.getAttribute('data-tl-blk-id');
+        const b = id && _blockById(id);
+        if (!b || b.done) return;
+        kind = 'tl2ibx'; el = tlLi;
+      } else return;
+      const d = { kind: kind, id: id, el: el, pointerId: e.pointerId, pointerType: e.pointerType,
+        x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, active: false, timer: null, scrollTimer: null, ghost: null, hitEl: null, target: null, baseDur: '' };
+      _tlDrag = d;
+      if (e.pointerType === 'touch') {
+        d.timer = setTimeout(function () {
+          if (_tlDrag !== d) return;
+          d.active = true;
+          _tlDragBegin();
+          if (navigator.vibrate) { try { navigator.vibrate(12); } catch (_) {} }
+        }, LONG_PRESS);
+      }
+    }, sig);
+    drawer.addEventListener('pointermove', function (e) {
+      const d = _tlDrag;
+      if (!d || e.pointerId !== d.pointerId) return;
+      d.x = e.clientX; d.y = e.clientY;
+      if (!d.active) {
+        const dist = Math.hypot(e.clientX - d.x0, e.clientY - d.y0);
+        if (d.pointerType === 'touch') { if (dist > 8) _tlDragEnd(); return; }
+        if (dist < 6) return;
+        d.active = true;
+        _tlDragBegin();
+        return;
+      }
+      _tlDragPlace();
+    }, sig);
+    drawer.addEventListener('pointerup', function (e) {
+      const d = _tlDrag;
+      if (!d || e.pointerId !== d.pointerId) return;
+      if (!d.active) { _tlDragEnd(); return; }
+      const kind = d.kind, id = d.id, t = d.target;
+      _tlDragEnd();
+      if (!t) return;
+      if (kind === 'ibx2tl') {
+        if (t.kind === 'slot') _ibxSchedule(id, t.date, t.s, t.e);
+        else if (t.kind === 'day') _ibxAuto(id, t.date);
+      } else if (kind === 'tl2ibx' && t.kind === 'inbox') {
+        _blockToInbox(id);
+      }
+    }, sig);
+    drawer.addEventListener('pointercancel', _tlDragEnd, sig);
+    drawer.addEventListener('touchmove', function (e) { if (_tlDrag && _tlDrag.active && e.cancelable) e.preventDefault(); }, { passive: false, signal: _ui.signal });
 
     drawer.addEventListener('click', function (e) {
+      if (performance.now() < _tlDragSuppress) return;
       const t = e.target;
       let n;
+      if (t.closest('[data-tl-ibx-toggle]'))   { _tlToggleInbox(); return; }
+      if ((n = t.closest('[data-tl-pane]')))   { _tl.pane = n.getAttribute('data-tl-pane') === 'inbox' ? 'inbox' : 'timeline'; _tlApplySplit(); if (_tl.pane === 'inbox') _tlPaintInbox(true); return; }
+      if ((n = t.closest('[data-tl-ibx-pri]'))) { _tl.ibxPri = n.getAttribute('data-tl-ibx-pri') || 'all'; _tlPaintInbox(true); return; }
       if ((n = t.closest('[data-tl-wd]')))     { const v = n.getAttribute('data-tl-wd'); _tl.day = (v === _tl.day ? '' : v); _renderTimeline(); return; }
       if ((n = t.closest('[data-tl-wk]')))     { const v = parseInt(n.getAttribute('data-tl-wk'), 10); _tl.wk = v === 0 ? 0 : _tl.wk + v; _renderTimeline(); return; }
       if ((n = t.closest('[data-tl-fold]')))   { const k = n.getAttribute('data-tl-fold'); _tl.fold[k] = !_tl.fold[k]; _renderTimeline(); return; }
@@ -6977,6 +7478,42 @@ const timeManagementModule = (function () {
         _el('#tm-timeline-search').value = '';
         _tlSavePrefs(); _renderTimeline(); return;
       }
+      // Inline Quick-Edit actions
+      if ((n = t.closest('[data-tl-qedit]')))     { _tlQuickEditOpen(n.getAttribute('data-tl-qedit')); return; }
+      if (t.closest('[data-tl-qe-cancel]'))       { _tlQuickEditCancel(); return; }
+      if (t.closest('[data-tl-qe-save]'))         { _tlQuickEditSave(); return; }
+      if ((n = t.closest('[data-tl-qe-shift]')))  { _tlQuickEditShift(parseInt(n.getAttribute('data-tl-qe-shift'), 10) || 0); return; }
+      if ((n = t.closest('[data-tl-qe-dur]')))    { _tlQuickEditDur(parseInt(n.getAttribute('data-tl-qe-dur'), 10) || 30); return; }
+      if ((n = t.closest('[data-tl-qe-day]')))    { _tlQuickEditDay(n.getAttribute('data-tl-qe-day')); return; }
+      if ((n = t.closest('[data-tl-qe-slot]')))   { const p = n.getAttribute('data-tl-qe-slot').split(','); _tlQuickEditSlot(+p[0], +p[1]); return; }
+      if ((n = t.closest('[data-tl-qe-tag]')))    { _tlQuickEditTag(n.getAttribute('data-tl-qe-tag')); return; }
+      // Free slot quick-place picker
+      if ((n = t.closest('[data-tl-slot-pick]'))) {
+        const gap = n.closest('.hub-tm-tl-gap');
+        if (!gap) return;
+        const ds = gap.getAttribute('data-tl-slot-date'), s = +gap.getAttribute('data-tl-slot-s'), e = +gap.getAttribute('data-tl-slot-e');
+        const same = _tl.slotPick && _tl.slotPick.date === ds && _tl.slotPick.s === s && _tl.slotPick.e === e;
+        _tl.slotPick = same ? null : { date: ds, s: s, e: e, offset: 0 };
+        if (_tl.slotPick) _tl.editId = '';
+        _renderTimeline();
+        return;
+      }
+      if ((n = t.closest('[data-tl-slot-shift]'))) {
+        if (!_tl.slotPick) return;
+        const delta = parseInt(n.getAttribute('data-tl-slot-shift'), 10) || 0;
+        const span = Math.max(0, _tl.slotPick.e - _tl.slotPick.s - MIN_DUR);
+        _tl.slotPick.offset = _clamp((_tl.slotPick.offset || 0) + delta, 0, span);
+        _renderTimeline();
+        return;
+      }
+      if (t.closest('[data-tl-slot-close]')) { _tl.slotPick = null; _renderTimeline(); return; }
+      if ((n = t.closest('[data-tl-slot-place]'))) {
+        const sp = _tl.slotPick, ibxId = n.getAttribute('data-tl-slot-place'), ps = +n.getAttribute('data-tl-s'), pe = +n.getAttribute('data-tl-e');
+        if (!sp) return;
+        if (_ibxSchedule(ibxId, sp.date, ps, pe)) _tl.slotPick = null;
+        _renderTimeline();
+        return;
+      }
       if ((n = t.closest('[data-tl-open]'))) {                       // › / ⌄  show or hide the checklist
         const id = n.getAttribute('data-tl-open');
         _tl.open[id] = n.getAttribute('aria-expanded') !== 'true';
@@ -6985,7 +7522,8 @@ const timeManagementModule = (function () {
         if (again) again.focus({ preventScroll: true });
         return;
       }
-      if ((n = t.closest('[data-tl-edit]'))) { _openDetails(n.getAttribute('data-tl-edit')); return; }   // editor opens on top; Timeline stays
+      if ((n = t.closest('[data-tl-to-ibx]'))) { _blockToInbox(n.getAttribute('data-tl-to-ibx')); return; }
+      if ((n = t.closest('[data-tl-edit]')))   { _openDetails(n.getAttribute('data-tl-edit')); return; }   // editor opens on top; Timeline stays
       if ((n = t.closest('[data-tl-done]')))   { _habToggleDone(n.getAttribute('data-tl-done')); _tlRefresh(); return; }
       if ((n = t.closest('[data-tl-next]')))   { _tlMove(n.getAttribute('data-tl-next')); return; }
       if ((n = t.closest('[data-tl-del]')))    { _tlDelete(n.getAttribute('data-tl-del')); return; }
@@ -6997,19 +7535,50 @@ const timeManagementModule = (function () {
         _setDate(b.date, { view: 'day', scrollMins: _toMins(b.startTime) });
         _focusBlock(b.id);
       }
-    });
+    }, sig);
+
+    drawer.addEventListener('input', function (e) {
+      const k = e.target.getAttribute && e.target.getAttribute('data-tl-qe');
+      if (!k || !_tl.qe) return;
+      _tl.qe[k] = e.target.value;
+      _tlQuickEditSync(k !== 'title');
+    }, sig);
+
+    drawer.addEventListener('submit', function (e) {
+      const f = e.target.closest && e.target.closest('[data-tl-ckadd]');
+      if (!f) return;
+      e.preventDefault();
+      const bid = f.getAttribute('data-tl-ckadd'), inp = f.querySelector('input');
+      const b = _blockById(bid), txt = inp ? inp.value.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+      if (!b || !txt) return;
+      const list = _ck(b);
+      if (list.length >= CK_MAX) { _toast('Maximum ' + CK_MAX + ' checklist items per block.'); return; }
+      list.push(_ckNewItem(txt));
+      _fckSig = '';
+      _scheduleSave();
+      _renderGrid({ animate: false, scroll: false });
+      _renderTimeline();
+      const nextInp = drawer.querySelector('[data-tl-ckadd="' + bid + '"] input');
+      if (nextInp) nextInp.focus({ preventScroll: true });
+    }, sig);
 
     drawer.addEventListener('keydown', function (e) {
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
       const t = e.target;
+      if (t.closest && t.closest('[data-tl-qe]')) {
+        if (e.isComposing || e.keyCode === 229) return;
+        if (e.key === 'Enter') { e.preventDefault(); _tlQuickEditSave(); return; }
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); _tlQuickEditCancel(); return; }
+      }
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (t.closest && t.closest('input, select, textarea')) {
         if (e.key === 'Escape' && t.id === 'tm-timeline-search' && t.value) { e.stopPropagation(); t.value = ''; _tl.q = ''; _renderTimeline(); }
         return;
       }
       if (e.key === '/') { e.preventDefault(); _el('#tm-timeline-search').focus(); }
+      else if (e.key === 'i' || e.key === 'I') { e.preventDefault(); _tlToggleInbox(); }
       else if (e.key === 't' || e.key === 'T') _tlJumpToday();
       else if (e.key === 'x' || e.key === 'X') _tlSelToggle();
-    });
+    }, sig);
 
     // Tick checklist items right inside the Timeline (same effect as in Focus mode)
     drawer.addEventListener('change', function (e) {
@@ -7030,7 +7599,7 @@ const timeManagementModule = (function () {
       const again = drawer.querySelector('[data-tl-ck="' + iid + '"][data-tl-blk="' + bid + '"]');
       if (again) again.focus({ preventScroll: true });
       _ckNudge(b);
-    });
+    }, sig);
   }
 
   /* ---- Actions ---- */
@@ -7388,10 +7957,92 @@ const timeManagementModule = (function () {
   }
 
   /* ---- Rows & groups ---- */
+  function _tlQuickEditHtml(b, c) {
+    const q = _tl.qe && _tl.qe.id === b.id ? _tl.qe : { id: b.id, title: b.title || '', date: b.date, start: b.startTime, end: b.endTime, tagId: b.tagId };
+    const id = _esc(b.id), today = c.today, tmr = _dateToStr(_addDays(_parseDate(today), 1));
+    const curDur = (/^\d{2}:\d{2}$/.test(q.start) && /^\d{2}:\d{2}$/.test(q.end)) ? (_toMins(q.end) - _toMins(q.start)) : 0;
+    const v = _tlQeValid(q);
+    return '<div class="hub-tm-tl-qedit" id="tm-tl-qedit-card">' +
+      '<div class="hub-tm-tl-qe-row">' +
+        '<input type="text" class="hub-tm-input hub-tm-tl-qe-title" id="tm-tl-qe-title" data-tl-qe="title" maxlength="120" value="' + _esc(q.title) + '" placeholder="Block title" aria-label="Block title">' +
+      '</div>' +
+      '<div class="hub-tm-tl-qe-row hub-tm-tl-qe-when">' +
+        '<div class="hub-tm-tl-qe-days">' +
+          '<button type="button" class="hub-tm-tl-qe-pill" data-tl-qe-day="today" aria-pressed="' + (q.date === today) + '">Today</button>' +
+          '<button type="button" class="hub-tm-tl-qe-pill" data-tl-qe-day="tmr" aria-pressed="' + (q.date === tmr) + '">Tomorrow</button>' +
+        '</div>' +
+        '<input type="date" class="hub-tm-input hub-tm-tl-qe-date" data-tl-qe="date" value="' + _esc(q.date) + '" aria-label="Date">' +
+      '</div>' +
+      '<div class="hub-tm-tl-qe-row hub-tm-tl-qe-time">' +
+        '<button type="button" class="hub-tm-tl-qe-step" data-tl-qe-shift="-15" title="Shift 15m earlier">-15m</button>' +
+        '<input type="time" class="hub-tm-input hub-tm-tl-qe-t" data-tl-qe="start" step="900" value="' + _esc(q.start) + '" aria-label="Start time">' +
+        '<span class="hub-tm-tl-qe-dash" aria-hidden="true">–</span>' +
+        '<input type="time" class="hub-tm-input hub-tm-tl-qe-t" data-tl-qe="end" step="900" value="' + _esc(q.end) + '" aria-label="End time">' +
+        '<button type="button" class="hub-tm-tl-qe-step" data-tl-qe-shift="15" title="Shift 15m later">+15m</button>' +
+      '</div>' +
+      '<div class="hub-tm-tl-qe-durs" id="tm-tl-qe-durs">' +
+        [15, 30, 45, 60, 90, 120].map(function (m) {
+          return '<button type="button" class="hub-tm-tl-qe-pill" data-tl-qe-dur="' + m + '" aria-pressed="' + (curDur === m) + '">' + _fmtDur(m) + '</button>';
+        }).join('') +
+      '</div>' +
+      '<div class="hub-tm-tl-qe-slots-wrap"><span class="hub-tm-tl-qe-lbl">Open slots:</span><div class="hub-tm-tl-qe-slots" id="tm-tl-qe-slots">' + _tlQeSlotsHtml(q) + '</div></div>' +
+      '<div class="hub-tm-tl-qe-tags" id="tm-tl-qe-tags" role="group" aria-label="Tag">' +
+        _allTags().map(function (tg) {
+          return '<button type="button" class="hub-tm-tl-qe-tag" data-tl-qe-tag="' + _esc(tg.id) + '" style="' + _tagStyle(tg) + '" aria-pressed="' + (tg.id === q.tagId) + '" title="' + _esc(tg.label) + '"><span class="hub-tm-tag-dot"></span><span>' + _esc(tg.label) + '</span></button>';
+        }).join('') +
+      '</div>' +
+      '<p class="hub-tm-tl-qe-err" id="tm-tl-qe-err" role="alert"' + (v.err ? '' : ' hidden') + '>' + _esc(v.err || '') + '</p>' +
+      '<div class="hub-tm-tl-qe-foot">' +
+        '<button type="button" class="hub-tm-btn hub-tm-btn--ghost hub-tm-btn--xs" data-tl-edit="' + id + '">Full details…</button>' +
+        (b.done ? '' : '<button type="button" class="hub-tm-btn hub-tm-btn--outline hub-tm-btn--xs" data-tl-to-ibx="' + id + '">To Inbox</button>') +
+        '<div class="hub-tm-tl-qe-foot-r">' +
+          '<button type="button" class="hub-tm-btn hub-tm-btn--outline hub-tm-btn--xs" data-tl-qe-cancel>Cancel</button>' +
+          '<button type="button" class="hub-tm-btn hub-tm-btn--primary hub-tm-btn--xs" id="tm-tl-qe-save" data-tl-qe-save' + (v.err ? ' disabled' : '') + '>Save</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+  function _tlGapRowHtml(date, s, e, nm, today) {
+    const dur = e - s;
+    if (dur < 15) return '';
+    const sp = _tl.slotPick, active = sp && sp.date === date && sp.s === s && sp.e === e;
+    const base = _tlSlotStart(date, s, e, 30, today, nm);
+    let pickHtml = '';
+    if (active) {
+      const ps = _clamp(base.s + (sp.offset || 0), s, Math.max(s, e - MIN_DUR));
+      const view = _ibxView().slice(0, 6);
+      const taskBtns = view.length
+        ? view.map(function (it) {
+            const pe = Math.min(ps + it.dur, e), fits = pe - ps >= it.dur;
+            return '<button type="button" class="hub-tm-tl-sp-item' + (fits ? '' : ' is-tight') + '" data-tl-slot-place="' + _esc(it.id) + '" data-tl-s="' + ps + '" data-tl-e="' + pe + '" style="' + _tagStyle(_tagOrFallback(it.tagId)) + '">' +
+              '<span class="hub-tm-tl-sp-t">' + _esc(it.title) + '</span>' +
+              '<span class="hub-tm-tl-sp-m">' + _toTime(ps) + '–' + _toTime(pe) + (fits ? '' : ' · trimmed') + '</span></button>';
+          }).join('')
+        : '<span class="hub-tm-tl-sp-empty">Inbox is empty — add a task in the Inbox panel first.</span>';
+      pickHtml = '<div class="hub-tm-tl-slotpick">' +
+        '<div class="hub-tm-tl-sp-head">' +
+          '<span>Place from <b>' + _toTime(ps) + '</b></span>' +
+          '<div class="hub-tm-tl-sp-nav">' +
+            '<button type="button" data-tl-slot-shift="-15" title="15m earlier">-15m</button>' +
+            '<button type="button" data-tl-slot-shift="15" title="15m later">+15m</button>' +
+            '<button type="button" data-tl-slot-close aria-label="Close slot picker">&times;</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="hub-tm-tl-sp-list">' + taskBtns + '</div>' +
+      '</div>';
+    }
+    return '<li class="hub-tm-tl-gap' + (active ? ' is-open' : '') + '" data-tl-slot-date="' + _esc(date) + '" data-tl-slot-s="' + s + '" data-tl-slot-e="' + e + '">' +
+      '<div class="hub-tm-tl-gap-body">' +
+        '<span class="hub-tm-tl-gap-lbl">Free · ' + _fmtDur(dur) + ' <i>(' + _toTime(s) + '–' + _toTime(e) + ')</i></span>' +
+        '<button type="button" class="hub-tm-tl-gap-add" data-tl-slot-pick aria-expanded="' + (active ? 'true' : 'false') + '" title="Place an Inbox task into ' + _toTime(s) + '–' + _toTime(e) + '">' + TL_ICON.plus + '<span>Place task</span></button>' +
+        pickHtml +
+      '</div></li>';
+  }
   function _tlItem(b, c) {
     const tag = _tagOrFallback(b.tagId), s = _toMins(b.startTime), e = _toMins(b.endTime), id = _esc(b.id), title = _esc(b.title || tag.label);
     const live = c.liveId === b.id, late = _tlLate(b, c.today, c.nm), next = c.nextId === b.id && !live;
     const ck = b.checklist || [], ckDone = ck.filter(function (i) { return i.done; }).length;
+    const qeOpen = _tl.editId === b.id;
     const meta = [];
     if (live) meta.push('<b class="hub-tm-tl-badge is-live">Live</b>');
     else if (late) meta.push('<b class="hub-tm-tl-badge is-late">Overdue</b>');
@@ -7401,9 +8052,9 @@ const timeManagementModule = (function () {
     if (c.flat) meta.push('<span>' + _esc(b.startTime) + '–' + _esc(b.endTime) + '</span>');
     meta.push('<span>' + _fmtDur(e - s) + '</span>');
     if (b.done && b.gp > 0) meta.push('<span class="hub-tm-tl-gold">+' + _fmtGold(b.gp) + ' gold</span>');
-    let when;
-    if (c.flat) { const d = _parseDate(b.date); when = '<span class="hub-tm-tl-t1">' + _dateLabel(d) + '</span><span class="hub-tm-tl-t2">' + DAY_SHORT[d.getDay()] + '</span>'; }
-    else when = '<span class="hub-tm-tl-t1">' + _esc(b.startTime) + '</span><span class="hub-tm-tl-t2">' + _esc(b.endTime) + '</span>';
+    let whenInner;
+    if (c.flat) { const d = _parseDate(b.date); whenInner = '<span class="hub-tm-tl-t1">' + _dateLabel(d) + '</span><span class="hub-tm-tl-t2">' + DAY_SHORT[d.getDay()] + '</span>'; }
+    else whenInner = '<span class="hub-tm-tl-t1">' + _esc(b.startTime) + '</span><span class="hub-tm-tl-t2">' + _esc(b.endTime) + '</span>';
     const mvName = _tlDayName(_tlMoveTarget(b, c.today), c.today);
     // Checklist drawer: the live block opens by itself until the person decides otherwise
     const isOpen = _tl.open[b.id] !== undefined ? !!_tl.open[b.id] : (live && ck.length > 0);
@@ -7419,14 +8070,15 @@ const timeManagementModule = (function () {
           ? '<ul class="hub-tm-tl-ck">' + ck.map(function (i) {
               return '<li class="' + (i.done ? 'is-done' : '') + '"><label class="hub-tm-tl-ckrow"><span class="hub-tm-ck-box"><input type="checkbox" data-tl-ck="' + _esc(i.id) + '" data-tl-blk="' + id + '"' + (i.done ? ' checked' : '') + '><span></span></span><span class="hub-tm-tl-cktext">' + _esc(i.text) + '</span></label></li>';
             }).join('') + '</ul>'
-          : '<p class="hub-tm-tl-ckempty">No tasks yet — add some in the editor.</p>') +
-        '<button type="button" class="hub-tm-tl-ckedit" data-tl-edit="' + id + '">' + TL_ICON.edit + '<span>Edit block &amp; checklist</span></button></div>';
+          : '<p class="hub-tm-tl-ckempty">No tasks yet.</p>') +
+        '<form class="hub-tm-tl-ckadd" data-tl-ckadd="' + id + '"><input type="text" class="hub-tm-input" maxlength="200" autocomplete="off" placeholder="+ Add checklist item…" aria-label="Add checklist item"><button type="submit" class="hub-tm-tl-act" title="Add">' + TL_ICON.plus + '</button></form>' +
+        '<button type="button" class="hub-tm-tl-ckedit" data-tl-edit="' + id + '">' + TL_ICON.edit + '<span>Open full editor</span></button></div>';
     }
     const picked = _tl.sel && !!_tl.picked[b.id];
     const pick = _tl.sel ? '<label class="hub-tm-tl-pick"><span class="hub-tm-ck-box"><input type="checkbox" data-tl-pick="' + id + '"' + (picked ? ' checked' : '') + ' aria-label="Select ' + title + '"><span></span></span></label>' : '';
-    const cls = 'hub-tm-tl-item' + (b.done ? ' is-done' : '') + (live ? ' is-live' : '') + (late ? ' is-late' : '') + (picked ? ' is-picked' : '');
-    return '<li class="' + cls + '" style="' + _tagStyle(tag) + '">' +
-      '<span class="hub-tm-tl-when">' + when + '</span><span class="hub-tm-tl-node" aria-hidden="true"></span>' +
+    const cls = 'hub-tm-tl-item' + (b.done ? ' is-done' : '') + (live ? ' is-live' : '') + (late ? ' is-late' : '') + (picked ? ' is-picked' : '') + (qeOpen ? ' is-editing' : '');
+    return '<li class="' + cls + '" data-tl-blk-id="' + id + '" style="' + _tagStyle(tag) + '">' +
+      '<button type="button" class="hub-tm-tl-when" data-tl-qedit="' + id + '" title="Quick edit time &amp; title" aria-expanded="' + (qeOpen ? 'true' : 'false') + '">' + whenInner + '</button><span class="hub-tm-tl-node" aria-hidden="true"></span>' +
       '<div class="hub-tm-tl-card">' + pick +
         '<button type="button" class="hub-tm-tl-main" data-tl-go="' + id + '">' +
           '<span class="hub-tm-tl-title">' + title + '</span>' +
@@ -7434,11 +8086,13 @@ const timeManagementModule = (function () {
             (live ? '<span class="hub-tm-tl-bar"><i style="width:' + _clamp(Math.round((c.nm - s) / (e - s) * 100), 0, 100) + '%"></i></span>' : '') + '</span>' +
         '</button>' +
         '<span class="hub-tm-tl-acts">' +
-          '<button type="button" class="hub-tm-tl-act" data-tl-edit="' + id + '" title="Edit block" aria-label="Edit ' + title + '">' + TL_ICON.edit + '</button>' +
+          '<button type="button" class="hub-tm-tl-act' + (qeOpen ? ' is-active' : '') + '" data-tl-qedit="' + id + '" title="Quick edit time &amp; title" aria-label="Quick edit ' + title + '" aria-expanded="' + (qeOpen ? 'true' : 'false') + '">' + TL_ICON.edit + '</button>' +
+          (b.done ? '' : '<button type="button" class="hub-tm-tl-act hub-tm-tl-act--ibx" data-tl-to-ibx="' + id + '" title="Move back to Inbox" aria-label="Move ' + title + ' back to Inbox">' + ICON.inbox + '</button>') +
           '<button type="button" class="hub-tm-tl-act hub-tm-tl-act--done" role="checkbox" aria-checked="' + (b.done ? 'true' : 'false') + '" data-tl-done="' + id + '" title="' + (b.done ? 'Mark not complete' : 'Mark complete') + '" aria-label="' + (b.done ? 'Mark ' + title + ' not complete' : 'Mark ' + title + ' complete') + '">' + TL_ICON.check + '</button>' +
           (b.done ? '' : '<button type="button" class="hub-tm-tl-act" data-tl-next="' + id + '" title="Move to ' + _esc(mvName) + '" aria-label="Move ' + title + ' to ' + _esc(mvName) + '">' + TL_ICON.fwd + '</button>') +
           '<button type="button" class="hub-tm-tl-act hub-tm-tl-act--del" data-tl-del="' + id + '" title="Delete" aria-label="Delete ' + title + '">' + TL_ICON.del + '</button>' +
         '</span>' +
+        (qeOpen ? _tlQuickEditHtml(b, c) : '') +
         strip + panel +
       '</div></li>';
   }
@@ -7450,20 +8104,46 @@ const timeManagementModule = (function () {
     const label = isToday ? 'Today' : diff === 1 ? 'Tomorrow' : diff === -1 ? 'Yesterday' : DAY_FULL[d.getDay()];
     let rows = '', placed = !isToday || !!c.liveId;
     const nowRow = '<li class="hub-tm-tl-now" aria-label="Current time"><span class="hub-tm-tl-now-t">' + _pad(Math.floor(c.nm / 60)) + ':' + _pad(c.nm % 60) + '</span><i class="hub-tm-tl-now-dot"></i><i class="hub-tm-tl-now-line"></i></li>';
+    const nowSn = Math.ceil(c.nm / SNAP) * SNAP;
     if (!folded) {
+      if (c.gaps && g.date >= c.today) {
+        const floor = isToday ? Math.max(6 * 60, nowSn) : 6 * 60;
+        const firstS = g.items.length ? _toMins(g.items[0].startTime) : DAY_MINS;
+        if (!g.items.length && DAY_MINS - floor >= 30) {
+          if (!placed) { rows += nowRow; placed = true; }
+          rows += _tlGapRowHtml(g.date, floor, DAY_MINS, c.nm, c.today);
+        } else if (g.items.length && firstS - floor >= 30) {
+          if (isToday && !placed && nowSn > 0 && floor >= c.nm) { rows += nowRow; placed = true; }
+          rows += _tlGapRowHtml(g.date, floor, firstS, c.nm, c.today);
+        }
+      }
       g.items.forEach(function (b, i) {
         const s = _toMins(b.startTime);
-        if (!placed && s > c.nm) { rows += nowRow; placed = true; }
-        else if (c.gaps && i > 0) {
-          const gap = s - _toMins(g.items[i - 1].endTime);
-          if (gap >= 30) rows += '<li class="hub-tm-tl-gap" aria-hidden="true"><span>Free · ' + _fmtDur(gap) + '</span></li>';
+        const prevE = i > 0 ? _toMins(g.items[i - 1].endTime) : 0;
+        const needNow = !placed && s > c.nm;
+        if (i > 0 && c.gaps) {
+          if (needNow) {
+            rows += nowRow;
+            placed = true;
+            if (s - Math.max(prevE, nowSn) >= 30) rows += _tlGapRowHtml(g.date, Math.max(prevE, nowSn), s, c.nm, c.today);
+          } else if (s - prevE >= 30) {
+            rows += _tlGapRowHtml(g.date, prevE, s, c.nm, c.today);
+          }
+        } else if (needNow) {
+          rows += nowRow;
+          placed = true;
         }
         rows += _tlItem(b, c);
       });
       if (!placed) rows += nowRow;
+      if (c.gaps && g.date >= c.today && g.items.length) {
+        const lastE = _toMins(g.items[g.items.length - 1].endTime);
+        const tailStart = isToday ? Math.max(lastE, nowSn) : lastE;
+        if (DAY_MINS - tailStart >= 30) rows += _tlGapRowHtml(g.date, tailStart, DAY_MINS, c.nm, c.today);
+      }
     }
     return '<section class="hub-tm-tl-group' + (isToday ? ' is-today' : '') + (folded ? ' is-folded' : '') + '">' +
-      '<div class="hub-tm-tl-ghead">' +
+      '<div class="hub-tm-tl-ghead" data-tl-drop-day="' + _esc(g.date) + '">' +
         '<button type="button" class="hub-tm-tl-gfold" data-tl-fold="' + _esc(g.date) + '" aria-expanded="' + !folded + '" aria-label="' + (folded ? 'Expand ' : 'Collapse ') + label + '">' + TL_ICON.chev + '</button>' +
         '<button type="button" class="hub-tm-tl-gopen" data-tl-day="' + _esc(g.date) + '" title="Open this day">' +
           '<span class="hub-tm-tl-day">' + label + '</span><span class="hub-tm-tl-date">' + DAY_SHORT[d.getDay()] + ', ' + _dateLabel(d) + ', ' + d.getFullYear() + '</span>' +
@@ -7489,13 +8169,18 @@ const timeManagementModule = (function () {
   function _tlEmpty(filtered) {
     return filtered
       ? '<div class="hub-tm-tl-empty"><b>No blocks match</b><p>Try another range, tag or search term.</p><button type="button" class="hub-tm-btn hub-tm-btn--outline" data-tl-reset>Reset filters</button></div>'
-      : '<div class="hub-tm-tl-empty"><b>Your timeline is empty</b><p>Drag across the day grid to plan your first block — it will appear here.</p></div>';
+      : '<div class="hub-tm-tl-empty"><b>Your timeline is empty</b><p>Drag an Inbox task onto any day above or across the day grid to start planning.</p></div>';
   }
 
   /* ---- Render ---- */
-  function _renderTimeline() {
+  function _renderTimeline(fromTimer) {
     const box = _el('#hub-tm-timeline-list'), sc = _el('#hub-tm-tl-scroll');
     if (!box || !sc) return;
+    if (fromTimer) {
+      if (_tlDrag && _tlDrag.active) return;
+      const ae = document.activeElement;
+      if (ae && ae.closest && ae.closest('.hub-tm-tl-qedit, .hub-tm-tl-ckadd, .hub-tm-tl-slotpick, .hub-tm-ibx-edit')) return;
+    }
     const type = _el('#tm-timeline-sort').value, today = _todayStr(), nm = _tlNowMins();
     _habitReset();
     _tlSyncControls();
@@ -7505,10 +8190,13 @@ const timeManagementModule = (function () {
     _tl.vis = blocks.map(function (b) { return b.id; });
     _tlPaintStats(list, today, nm);
 
-    const noFilter = !_tl.q.trim() && _tl.tag === 'all' && _tl.status === 'all' && !_tl.day;
-    const c = { today: today, nm: nm, liveId: spot.liveId, nextId: spot.nextId, flat: type !== 'nearest', gaps: type === 'nearest' && noFilter };
+    const gaps = type === 'nearest' && _tl.range !== 'late' && !_tl.q.trim() && _tl.tag === 'all' && _tl.status === 'all';
+    const c = { today: today, nm: nm, liveId: spot.liveId, nextId: spot.nextId, flat: type !== 'nearest', gaps: gaps };
+    const openDay = _tl.day || (_tl.range === 'today' ? today : '');
     let html;
-    if (!_timeBlocks.length) html = _tlEmpty(false);
+    if (openDay && openDay >= today && !blocks.length && gaps) {
+      html = _tlGroup({ date: openDay, items: [] }, c);
+    } else if (!_timeBlocks.length) html = _tlEmpty(false);
     else if (!blocks.length) html = _tlEmpty(true);
     else if (type === 'tag') {
       const by = {}, order = [];
@@ -7542,7 +8230,7 @@ const timeManagementModule = (function () {
     const act = document.activeElement;
     let fk = null;
     if (act && box.contains(act)) {
-      ['data-tl-go', 'data-tl-done', 'data-tl-next', 'data-tl-del', 'data-tl-day', 'data-tl-past'].some(function (a) {
+      ['data-tl-qedit', 'data-tl-go', 'data-tl-to-ibx', 'data-tl-done', 'data-tl-next', 'data-tl-del', 'data-tl-day', 'data-tl-past'].some(function (a) {
         if (act.hasAttribute(a)) { fk = [a, act.getAttribute(a)]; return true; }
         return false;
       });
@@ -9292,6 +9980,7 @@ const timeManagementModule = (function () {
     _habQueueSync(800);
   }
 
+  mod._tlHelpers = { slotStart: _tlSlotStart, dayFreeWindows: _tlDayFreeWindows, suggestSlots: _tlSuggestSlots };
   return mod;
 })();
 
