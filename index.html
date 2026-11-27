@@ -25,7 +25,7 @@
   <link rel="stylesheet" href="cashflow-styles.css?v=20261125" />
   <link rel="stylesheet" href="time-management.css?v=20261125b" />
   <link rel="stylesheet" href="time-management.ember.css?v=20261117" />
-  <link rel="stylesheet" href="collaboration.css?v=20261126a" />
+  <link rel="stylesheet" href="collaboration.css?v=20261127a" />
   <link rel="stylesheet" href="wallet-os-shell.css?v=20261117" />
   <link rel="stylesheet" href="wallet-os-topbar.css?v=20261118" />
   <link rel="stylesheet" href="collab-topbar.css?v=20261125" />
@@ -812,7 +812,7 @@
   <script src="cashflow.js?v=20261125"></script>
   <script src="walletos-mobile.js?v=20261125"></script>
   <script src="time-management.js?v=20261125b"></script>
-  <script src="collaboration.js?v=20261126a"></script>
+  <script src="collaboration.js?v=20261127a"></script>
 
   <!-- 4. Khởi chạy giao diện & các nút điều khiển -->
   <script>
@@ -927,13 +927,28 @@
     (function () {
       var bar = document.querySelector('.standalone-topbar');
       var clock = document.getElementById('st-clock');
-      var TITLES = {
+      var TITLES_VI = {
         finance: 'Wallet.OS — Quản Lý Tài Chính Cá Nhân',
         time: 'Chrono.OS — Quản Lý Thời Gian',
         collab: 'Collab.OS — Giữ Streak Cùng Nhau'
       };
+      var TITLES_EN = {
+        finance: 'Wallet.OS — Personal Finance',
+        time: 'Chrono.OS — Time Management',
+        collab: 'Collab.OS — Streak Rooms Together'
+      };
+      var curSection = 'finance';
       var timer = null;
       function pad(n) { return n < 10 ? '0' + n : '' + n; }
+      function isEn() {
+        try {
+          var l = window.app && window.app.getLanguage ? window.app.getLanguage() : localStorage.getItem('hub_system_language');
+          return l === 'en';
+        } catch (e) { return false; }
+      }
+      function applyTitle() {
+        document.title = (isEn() ? TITLES_EN : TITLES_VI)[curSection];
+      }
       function tick() {
         var d = new Date(), h = d.getHours(), m = d.getMinutes();
         if (clock) clock.textContent = pad(h) + ':' + pad(m);
@@ -942,12 +957,13 @@
         bar.style.setProperty('--tm-m', (m * 6).toFixed(1) + 'deg');
       }
       function setSection(name) {
-        var s = (name === 'time' || name === 'collab') ? name : 'finance';
-        document.body.setAttribute('data-section', s);
-        document.title = TITLES[s];
+        curSection = (name === 'time' || name === 'collab') ? name : 'finance';
+        document.body.setAttribute('data-section', curSection);
+        applyTitle();
         clearInterval(timer);
-        if (s === 'time') { tick(); timer = setInterval(tick, 30000); }
+        if (curSection === 'time') { tick(); timer = setInterval(tick, 30000); }
       }
+      window.addEventListener('hubLanguageChanged', applyTitle);
       window.WalletTopbar = { setSection: setSection };
       setSection('finance');
     })();
@@ -961,27 +977,34 @@
       var brand = document.querySelector('.st-brand--collab');
       var $ = function (id) { return document.getElementById(id); };
       var el = { room: $('st-rail-room'), group: $('st-rail-group'), n: $('st-rail-n'), bar: $('st-rail-bar'), hearts: $('st-rail-hearts'), me: $('st-rail-me'), state: $('st-collab-state') };
-      var heartKey = '';
+      var heartKey = '', lastDetail = null;
+      function isEn() {
+        try {
+          var l = window.app && window.app.getLanguage ? window.app.getLanguage() : localStorage.getItem('hub_system_language');
+          return l === 'en';
+        } catch (e) { return false; }
+      }
       function put(node, t) { if (node && node.textContent !== t) node.textContent = t; }
       function attr(n, k, v) { if (n && n.getAttribute(k) !== v) n.setAttribute(k, v); }
       function hearts(h, max) {
-        var key = h + '/' + max;
+        var en = isEn(), key = h + '/' + max + '/' + (en ? 'en' : 'vi');
         if (key === heartKey) return;
         heartKey = key;
         el.hearts.textContent = '';
         for (var i = 0; i < max; i++) { var s = document.createElement('i'); s.className = i < h ? 'is-full' : 'is-empty'; el.hearts.appendChild(s); }
         el.hearts.setAttribute('role', 'img');
-        el.hearts.setAttribute('aria-label', h + ' trên ' + max + ' tim');
+        el.hearts.setAttribute('aria-label', en ? (h + ' of ' + max + ' hearts') : (h + ' trên ' + max + ' tim'));
       }
-      document.addEventListener('collab:status', function (e) {
-        var d = e.detail;
+      function applyStatus(d) {
+        lastDetail = d;
+        var en = isEn();
         if (!d || d.view !== 'room' || !d.room) {
           attr(rail, 'data-state', 'idle'); attr(rail, 'data-all', '0'); attr(rail, 'data-me', 'none');
-          attr(brand, 'data-live', '0'); put(el.state, 'Sảnh'); heartKey = '';
+          attr(brand, 'data-live', '0'); put(el.state, en ? 'Lobby' : 'Sảnh'); heartKey = '';
           return;
         }
         attr(rail, 'data-state', 'room');
-        attr(brand, 'data-live', '1'); put(el.state, 'Trong phòng');
+        attr(brand, 'data-live', '1'); put(el.state, en ? 'In room' : 'Trong phòng');
         put(el.room, d.room);
         attr(el.room, 'title', d.room);
         put(el.group, String(d.group));
@@ -992,8 +1015,23 @@
         hearts(d.hearts, d.max);
         var me = !d.todayOn ? 'rest' : d.todayDone ? 'done' : 'wait';
         attr(rail, 'data-me', me);
-        put(el.me, me === 'rest' ? '– Nghỉ' : me === 'done' ? '✓ Đã check-in' : '● Chưa check-in');
-      });
+        put(el.me, me === 'rest' ? (en ? '– Rest' : '– Nghỉ') : me === 'done' ? (en ? '✓ Checked in' : '✓ Đã check-in') : (en ? '● Not yet' : '● Chưa check-in'));
+      }
+      function applyRailLang() {
+        var en = isEn();
+        put(document.querySelector('#tab-collab span'), en ? 'Collab' : 'Cộng tác');
+        put(rail.querySelector('.st-rail-hint .st-rail-k'), en ? 'Tip' : 'Gợi ý');
+        put(rail.querySelector('.st-rail-hint .st-rail-v'), en ? 'Join a room to keep streaks together' : 'Vào một phòng để giữ streak cùng nhau');
+        put(rail.querySelector('.st-rail-room .st-rail-k'), en ? 'Room' : 'Phòng');
+        put(rail.querySelector('.st-rail-group .st-rail-k'), en ? 'Group streak' : 'Chuỗi chung');
+        put(rail.querySelector('.st-rail-group .st-rail-u'), en ? 'days' : 'ngày');
+        put(rail.querySelector('.st-rail-today .st-rail-k'), en ? 'Today' : 'Hôm nay');
+        put(rail.querySelector('.st-rail-me .st-rail-k'), en ? 'You' : 'Bạn');
+        applyStatus(lastDetail);
+      }
+      document.addEventListener('collab:status', function (e) { applyStatus(e.detail); });
+      window.addEventListener('hubLanguageChanged', applyRailLang);
+      applyRailLang();
     })();
   </script>
 
